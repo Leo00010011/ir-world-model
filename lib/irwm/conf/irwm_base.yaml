@@ -1,0 +1,22 @@
+# Base config for every entry point. A project's primary config does:
+#   defaults: [irwm_base, _self_]
+#   hydra: {searchpath: ["pkg://irwm.conf"]}
+#   project: <project folder name>
+defaults:
+  - paths: default
+  - cluster: local
+  - wandb: default
+  - _self_
+
+project: ???          # set by the project's primary config; also the W&B group and output subdir
+run_name: ${cluster.run_name}   # local: timestamp; slurm: slurm-<job id> (stable across requeues)
+seed: 0
+
+hydra:
+  run:
+    dir: ${paths.output_root}/${project}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${paths.output_root}/${project}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false

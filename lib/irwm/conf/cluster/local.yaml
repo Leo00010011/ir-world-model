@@ -1,0 +1,8 @@
+# Laptop / interactive runs.
+name: local
+accelerator: auto
+devices: 1
+num_nodes: 1
+num_workers: 0
+precision: 32-true
+run_name: ${now:%Y-%m-%d}_${now:%H-%M-%S}

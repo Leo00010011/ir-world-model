@@ -44,6 +44,7 @@ ir-world-model/
 │       ├── eval/               # COCO eval wrapper, per-horizon metrics, bootstrap CIs
 │       └── utils/              # paths/env resolution, seeding, logging, SLURM helpers
 ├── projects/                   # one folder per research project; entry points + configs only
+│   ├── smoke/                  # permanent env/cluster health check (toy Lightning run)
 │   ├── feature_extraction/     # build the DINOv2 caches
 │   │   ├── conf/               # Hydra configs
 │   │   └── *.py                # @hydra.main entry points
@@ -60,6 +61,8 @@ ir-world-model/
 Rules:
 - **Reusable logic goes in `lib/irwm`.** Project folders hold only Hydra entry points, configs and project-specific glue. If two projects need the same function, it moves to `lib/`.
 - A project folder may later get its own `spec/`-style constitution once it grows large enough.
+- **Hydra wiring:** shared config groups live in `lib/irwm/conf/`. A project's primary config uses `defaults: [irwm_base, _self_]` and `hydra.searchpath: ["pkg://irwm.conf"]`, and sets `project: <folder name>`. Every entry point calls `irwm.utils.paths.load_env()` at import time, before `@hydra.main`. `run_name` comes from the cluster group (a timestamp locally, `slurm-<job id>` on SLURM, which is stable across requeues). Checkpoints go to `${paths.ckpt_root}/<project>/${run_name}/`, with the trainer's `default_root_dir` set to that dir, and training resumes with `resume_ckpt_path()`.
+- **Dependencies:** deps shared by all projects (torch, lightning, hydra, wandb, …) are declared in `lib/pyproject.toml`. Each feature adds its own deps there, or to its project's `pyproject.toml` if only that project needs them.
 - `lib/irwm` must never import from `projects/`.
 - Third-party code (DINO-Foresight) is used only through an adapter in `irwm/worldmodel/`. We do not patch the submodule. If a change is unavoidable, it is kept as a patch file with its reason recorded in the spec.
 
@@ -147,7 +150,13 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 
 | Component | Location | Feature | Status |
 |---|---|---|---|
-| uv workspace, `irwm` package skeleton, env-var path resolution | `pyproject.toml`, `lib/irwm/utils/paths.py` | F0 | ☐ |
+| uv workspace, `irwm` package skeleton, env-var path resolution | `pyproject.toml`, `lib/irwm/utils/paths.py` | F0 | ✓ (local; server check pending) |
+| Git provenance + W&B logger factory (`git_info`, `make_wandb_logger`) | `lib/irwm/utils/tracking.py` | F0 | ✓ |
+| SLURM helpers (`on_slurm`, `cluster_plugins`, `resume_ckpt_path`) | `lib/irwm/utils/slurm.py` | F0 | ✓ |
+| Shared Hydra groups (`irwm_base`, `paths`, `cluster/{local,slurm}`, `wandb`) | `lib/irwm/conf/` (`pkg://irwm.conf`) | F0 | ✓ |
+| Smoke project (Hydra + Lightning + W&B + requeue health check) | `projects/smoke/` | F0 | ✓ |
+| Generic sbatch template | `slurm/job.sbatch` | F0 | ✓ (TODO values) |
+| DINO-Foresight submodule @ `d98f765` | `third_party/DINO-Foresight` | F0 | ✓ |
 | FLIR ADAS v2 readers (images, video, COCO labels) | `lib/irwm/data/` | F2 | ☐ |
 | Canonical class mapping | `lib/irwm/data/classes.py` | F2 | ☐ |
 | Video clip builder (30 FPS → stride 5, 4 ctx + 6 future) | `lib/irwm/data/clips.py` | F3 | ☐ |

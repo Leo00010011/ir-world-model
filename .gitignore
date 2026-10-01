@@ -1,0 +1,33 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Local secrets / env
+.env
+
+# Run artefacts (normally under $IRWM_OUTPUT_ROOT, but guard against local spills)
+outputs/
+multirun/
+wandb/
+lightning_logs/
+slurm_logs/
+slurm-*.out
+
+# Large binaries (weights, caches) never go in git
+*.ckpt
+*.h5
+*.hdf5
+*.pth
+*.pt
+*.safetensors
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

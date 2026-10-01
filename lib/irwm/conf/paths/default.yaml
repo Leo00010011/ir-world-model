@@ -1,0 +1,6 @@
+# Only the IRWM_* environment variables may hold paths (TechStack §6). No defaults on purpose:
+# a missing variable must fail loudly instead of silently writing somewhere unexpected.
+data_root: ${oc.env:IRWM_DATA_ROOT}
+cache_root: ${oc.env:IRWM_CACHE_ROOT}
+ckpt_root: ${oc.env:IRWM_CKPT_ROOT}
+output_root: ${oc.env:IRWM_OUTPUT_ROOT}

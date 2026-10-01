@@ -1,0 +1,21 @@
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: smoke
+
+data:
+  n_samples: 256
+  in_dim: 8
+  noise: 0.05
+  val_fraction: 0.25
+  batch_size: 32
+
+trainer:
+  max_epochs: 3
+
+lr: 0.05
