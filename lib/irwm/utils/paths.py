@@ -40,19 +40,25 @@ def repo_root() -> Path:
 def load_env(dotenv_path: str | Path | None = None) -> bool:
     """Load ``.env`` (default: ``<repo_root>/.env``) without overriding existing variables.
 
+    Afterwards, a leading ``~`` in any ``IRWM_*`` root variable is expanded in place,
+    because Hydra's ``${oc.env:...}`` passes the raw string through.
     Returns ``True`` if a file was loaded and ``False`` if it does not exist.
     """
     if dotenv_path is None:
         try:
-            path = repo_root() / ".env"
+            path: Path | None = repo_root() / ".env"
         except FileNotFoundError:
-            return False
+            path = None
     else:
         path = Path(dotenv_path)
-    if not path.is_file():
-        return False
-    load_dotenv(path, override=False)
-    return True
+    loaded = path is not None and path.is_file()
+    if loaded:
+        load_dotenv(path, override=False)
+    for var in ROOT_ENV_VARS.values():
+        value = os.environ.get(var, "").strip()
+        if value.startswith("~"):
+            os.environ[var] = str(Path(value).expanduser())
+    return loaded
 
 
 def get_root(name: str) -> Path:

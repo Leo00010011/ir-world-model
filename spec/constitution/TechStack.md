@@ -121,7 +121,8 @@ Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`. It s
 
 ## 5. SLURM rules
 - Every entry point runs headless, takes no interactive input, and is fully described by its Hydra config.
-- Launch through `hydra/launcher=submitit_slurm` (sweeps) or the `slurm/*.sbatch` templates (single jobs). Partition, account, GPU type and time come from a Hydra `cluster` config group, never from code.
+- Launch through `slurm/submit.sh <site> <entry.py>` (single jobs) or `-m cluster=<site>` (submitit sweeps). Partition, account, GPU type and time come from **one Hydra file per cluster**, `lib/irwm/conf/cluster/<site>.yaml`, which inherits `cluster/slurm.yaml`. `submit.sh` turns it into sbatch flags, so resources are never duplicated in `#SBATCH` lines or code.
+- New cluster: add a site file, then run `bash slurm/setup_env.sh` on its login node (installs uv in user space, syncs, verifies).
 - Jobs must **resume after preemption**: Lightning `ckpt_path="last"`, requeue signal handling (`SLURMEnvironment(auto_requeue=True)`), and idempotent cache writers that skip or append finished rows.
 - Data loading must be efficient on shared filesystems: open HDF5 lazily per worker (not in `__init__`), and use large chunked reads.
 - Multi-GPU goes through Lightning DDP only. Code must not assume a single GPU or rank 0.
@@ -134,6 +135,7 @@ Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`. It s
 | `IRWM_CKPT_ROOT` | Model checkpoints (ours + downloaded DINOv2 / DINO-Foresight weights and PCA) |
 | `IRWM_OUTPUT_ROOT` | Hydra run dirs, eval JSONs, figures |
 | `WANDB_PROJECT`, `WANDB_ENTITY`, `WANDB_MODE` | W&B; `WANDB_MODE=offline` is supported for compute nodes without internet |
+| `WANDB_API_KEY_FILE` | File holding the W&B key (default `~/.wandb_api_key`); `slurm/env.sh` exports `WANDB_API_KEY` from it when unset |
 
 Hydra configs read these through `${oc.env:IRWM_CACHE_ROOT}`. A local `.env` (git-ignored) sets them on the laptop.
 
@@ -152,10 +154,11 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 |---|---|---|---|
 | uv workspace, `irwm` package skeleton, env-var path resolution | `pyproject.toml`, `lib/irwm/utils/paths.py` | F0 | ✓ (local; server check pending) |
 | Git provenance + W&B logger factory (`git_info`, `make_wandb_logger`) | `lib/irwm/utils/tracking.py` | F0 | ✓ |
-| SLURM helpers (`on_slurm`, `cluster_plugins`, `resume_ckpt_path`) | `lib/irwm/utils/slurm.py` | F0 | ✓ |
+| SLURM helpers (`on_slurm`, `cluster_plugins`, `resume_ckpt_path`, `sbatch_args`; CLI `python -m irwm.utils.slurm <site>`) | `lib/irwm/utils/slurm.py` | F0 | ✓ |
 | Shared Hydra groups (`irwm_base`, `paths`, `cluster/{local,slurm}`, `wandb`) | `lib/irwm/conf/` (`pkg://irwm.conf`) | F0 | ✓ |
 | Smoke project (Hydra + Lightning + W&B + requeue health check) | `projects/smoke/` | F0 | ✓ |
-| Generic sbatch template | `slurm/job.sbatch` | F0 | ✓ (TODO values) |
+| Cluster scripts: `setup_env.sh` (per-cluster env bootstrap), `submit.sh` (site config → sbatch), `job.sbatch`, `env.sh` (.env + W&B key file) | `slurm/` | F0 | ✓ |
+| Per-cluster site configs (template `example_site.yaml`) | `lib/irwm/conf/cluster/<site>.yaml` | F0 | ☐ user adds one per cluster |
 | DINO-Foresight submodule @ `d98f765` | `third_party/DINO-Foresight` | F0 | ✓ |
 | FLIR ADAS v2 readers (images, video, COCO labels) | `lib/irwm/data/` | F2 | ☐ |
 | Canonical class mapping | `lib/irwm/data/classes.py` | F2 | ☐ |

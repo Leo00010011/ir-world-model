@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
-# Generic single-job template. Submit from the repo root:
-#   sbatch slurm/job.sbatch <entry_point.py> [hydra overrides...]
-#   sbatch slurm/job.sbatch projects/smoke/train.py cluster=slurm
-# Resources: edit the TODO lines (keep them in sync with lib/irwm/conf/cluster/slurm.yaml),
-# or override per submission: sbatch --time=08:00:00 --gres=gpu:2 slurm/job.sbatch ...
+# Generic single-job script. Prefer submitting through slurm/submit.sh, which derives the
+# resource flags (partition, gres, time, ...) from lib/irwm/conf/cluster/<site>.yaml:
+#   slurm/submit.sh <site> projects/smoke/train.py [hydra overrides...]
+# Raw use (resources from the command line / cluster defaults):
+#   sbatch --partition=gpu --gres=gpu:1 slurm/job.sbatch projects/smoke/train.py cluster=<site>
 #
 #SBATCH --job-name=irwm
-#SBATCH --partition=TODO_PARTITION
-##SBATCH --account=TODO_ACCOUNT
-##SBATCH --qos=TODO_QOS
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=04:00:00
 #SBATCH --output=slurm_logs/%x-%j.out
 #SBATCH --open-mode=append
 #SBATCH --requeue
@@ -23,29 +14,20 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-    echo "usage: sbatch slurm/job.sbatch <entry_point.py> [hydra overrides...]" >&2
+    echo "usage: sbatch [flags] slurm/job.sbatch <entry_point.py> [hydra overrides...]" >&2
     exit 2
 fi
 
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
-mkdir -p slurm_logs
+source slurm/env.sh
 
-# Load IRWM_* / WANDB_* from .env if present. Variables already exported in the shell win.
-if [[ -f .env ]]; then
-    while IFS='=' read -r key value; do
-        [[ -z "$key" || "$key" == \#* ]] && continue
-        key="${key// /}"
-        value="${value%%#*}"; value="${value%"${value##*[![:space:]]}"}"
-        value="${value/#\~/$HOME}"
-        [[ -z "${!key:-}" ]] && export "$key=$value"
-    done < .env
-fi
-
-echo "[irwm] job ${SLURM_JOB_ID:-?} on $(hostname) | restart count ${SLURM_RESTART_COUNT:-0} | $(date -Is)"
+echo "[irwm] job ${SLURM_JOB_ID:-?} on $(hostname) | restart ${SLURM_RESTART_COUNT:-0} | $(date -Is)"
 echo "[irwm] git $(git rev-parse --short HEAD 2>/dev/null || echo unknown) | cmd: $*"
+echo "[irwm] W&B key: $([[ -n "${WANDB_API_KEY:-}" ]] && echo present || echo MISSING) | WANDB_MODE=${WANDB_MODE:-online}"
+command -v nvidia-smi >/dev/null && nvidia-smi -L || echo "[irwm] nvidia-smi not found"
 
-# srun so Lightning sees one task per GPU. Set IRWM_NO_UV_RUN=1 on nodes where `uv run` must not
-# touch the network or the lockfile (the env was built on the login node with `uv sync --frozen`).
+# srun so Lightning sees one task per GPU. IRWM_NO_UV_RUN=1 skips `uv run` (no lockfile/network
+# access at all) on nodes where the env was built beforehand with slurm/setup_env.sh.
 if [[ "${IRWM_NO_UV_RUN:-0}" == "1" ]]; then
     srun .venv/bin/python "$@"
 else

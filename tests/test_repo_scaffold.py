@@ -8,17 +8,20 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 from hydra import compose, initialize_config_dir
+from omegaconf import OmegaConf
 from omegaconf.errors import InterpolationResolutionError
 
 from irwm.utils import paths
+from irwm.utils import slurm as slurm_utils
 from irwm.utils.paths import MissingEnvVarError, ROOT_ENV_VARS, get_root, load_env, repo_root
-from irwm.utils.slurm import cluster_plugins, on_slurm, resume_ckpt_path
+from irwm.utils.slurm import cluster_plugins, on_slurm, resume_ckpt_path, sbatch_args
 from irwm.utils.tracking import git_info
 
 REPO = repo_root()
@@ -51,7 +54,7 @@ class TestPackageAndEnvironment:
     def test_conf_shipped_with_package(self):
         conf = importlib.resources.files("irwm.conf")
         for rel in ["irwm_base.yaml", "paths/default.yaml", "wandb/default.yaml",
-                    "cluster/local.yaml", "cluster/slurm.yaml"]:
+                    "cluster/local.yaml", "cluster/slurm.yaml", "cluster/example_site.yaml"]:
             assert conf.joinpath(rel).is_file(), rel
 
 
@@ -103,6 +106,12 @@ class TestPaths:
     def test_load_env_missing_file(self, tmp_path):
         assert load_env(tmp_path / "missing.env") is False
 
+    def test_load_env_expands_tilde(self, tmp_path, monkeypatch):
+        # Hydra's oc.env passes the raw string through, so ~ must be expanded in the env itself.
+        monkeypatch.setenv("IRWM_OUTPUT_ROOT", "~/irwm/outputs")
+        load_env(tmp_path / "missing.env")
+        assert os.environ["IRWM_OUTPUT_ROOT"] == str(Path("~/irwm/outputs").expanduser())
+
     def test_no_hardcoded_paths_in_lib(self):
         pattern = re.compile(r"[A-Za-z]:\\\\|/home/|/scratch/|/cluster/")
         for f in (REPO / "lib" / "irwm").rglob("*.py"):
@@ -137,6 +146,15 @@ class TestHydraComposition:
         assert cfg.hydra.launcher.gres == cfg.cluster.gres
         assert cfg.hydra.launcher.partition == cfg.cluster.partition
         assert cfg.run_name == "slurm-4242"
+
+    def test_site_config_inherits_slurm(self, irwm_env):
+        cfg = self._compose(["cluster=example_site"], hydra_cfg=True)
+        assert cfg.cluster.name == "example_site"
+        assert cfg.cluster.accelerator == "gpu"          # inherited from cluster/slurm.yaml
+        assert cfg.cluster.partition == "TODO_PARTITION"  # set by the site file
+        assert cfg.hydra.launcher._target_.endswith("SlurmLauncher")
+        assert cfg.hydra.launcher.partition == "TODO_PARTITION"
+        assert any("slurm/env.sh" in s for s in cfg.hydra.launcher.setup)
 
     def test_run_dir_under_output_root(self, irwm_env):
         cfg = self._compose(hydra_cfg=True)
@@ -173,6 +191,129 @@ class TestTrackingAndSlurm:
         assert resume_ckpt_path(tmp_path) == str(tmp_path / "hpc_ckpt_10.ckpt")
 
 
+class TestSbatchFlags:
+    def test_sbatch_args_mapping(self):
+        cluster = OmegaConf.create({
+            "partition": "gpu", "account": None, "qos": "", "constraint": None,
+            "gres": "gpu:a100:2", "num_nodes": 1, "devices": 2, "cpus_per_task": 16,
+            "mem_gb": 64, "timeout_min": 90, "extra_sbatch_args": ["--exclude=node1"],
+        })
+        assert sbatch_args(cluster) == [
+            "--partition=gpu", "--gres=gpu:a100:2", "--nodes=1", "--ntasks-per-node=2",
+            "--cpus-per-task=16", "--mem=64G", "--time=90", "--exclude=node1",
+        ]
+
+    def test_cli_refuses_todo_and_applies_cluster_overrides(self, capsys):
+        assert slurm_utils._main(["example_site"]) == 1
+        assert "TODO" in capsys.readouterr().err
+        assert slurm_utils._main(["example_site", "cluster.partition=gpu",
+                                  "cluster.timeout_min=30", "seed=3"]) == 0
+        flags = capsys.readouterr().out.split()
+        assert "--partition=gpu" in flags and "--time=30" in flags
+
+
+# --------------------------------------------------------------------------- Shell scripts
+def _find_bash() -> str | None:
+    """Git Bash on Windows (never WSL's System32 bash), plain bash elsewhere."""
+    if sys.platform != "win32":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    if git:
+        # git.exe lives in <Git>/cmd or <Git>/mingw64/bin depending on how PATH was set up.
+        for git_root in Path(git).resolve().parents[:3]:
+            for cand in (git_root / "bin" / "bash.exe", git_root / "usr" / "bin" / "bash.exe"):
+                if cand.is_file():
+                    return str(cand)
+    return None
+
+
+BASH = _find_bash()
+
+
+def _write_exe(path: Path, text: str) -> None:
+    path.write_text(text, newline="\n")
+    path.chmod(0o755)
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available")
+class TestShellScripts:
+    @pytest.mark.parametrize("script", ["env.sh", "job.sbatch", "submit.sh", "setup_env.sh"])
+    def test_syntax(self, script):
+        subprocess.run([BASH, "-n", (REPO / "slurm" / script).as_posix()], check=True)
+
+    def test_no_crlf(self):
+        for f in (REPO / "slurm").iterdir():
+            if f.suffix in {".sh", ".sbatch"}:
+                assert b"\r\n" not in f.read_bytes(), f
+
+    @staticmethod
+    def _source_env_sh(tmp_path: Path, dotenv: str, **env_extra: str) -> dict[str, str]:
+        """Source a copy of env.sh in an isolated fake repo (tmp/repo) with HOME=tmp/home."""
+        repo, home = tmp_path / "repo", tmp_path / "home"
+        (repo / "slurm").mkdir(parents=True, exist_ok=True)
+        home.mkdir(exist_ok=True)
+        shutil.copy(REPO / "slurm" / "env.sh", repo / "slurm" / "env.sh")
+        (repo / ".env").write_bytes(dotenv.encode())
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("IRWM_", "WANDB_"))}
+        env.update(HOME=home.as_posix(), **env_extra)
+        names = "IRWM_DATA_ROOT IRWM_CACHE_ROOT IRWM_CKPT_ROOT WANDB_API_KEY"
+        script = f'source "$1"; for v in {names}; do echo "$v=${{!v:-}}"; done'
+        out = subprocess.run(
+            [BASH, "-c", script, "_", (repo / "slurm" / "env.sh").as_posix()],
+            env=env, capture_output=True, text=True, check=True,
+        ).stdout
+        return dict(line.split("=", 1) for line in out.splitlines())
+
+    def test_env_sh_parses_dotenv_and_key_file(self, tmp_path):
+        (tmp_path / "home").mkdir()
+        (tmp_path / "home" / "mykey").write_text("abc123\n")
+        dotenv = (
+            'export IRWM_DATA_ROOT="/data/with space"\r\n'
+            "IRWM_CACHE_ROOT=~/cache   # inline comment\r\n"
+            "# a comment line\r\n"
+            "IRWM_CKPT_ROOT=/from/dotenv\r\n"
+            "WANDB_API_KEY_FILE=~/mykey\r\n"
+        )
+        got = self._source_env_sh(tmp_path, dotenv, IRWM_CKPT_ROOT="/from/shell")
+        assert got["IRWM_DATA_ROOT"] == "/data/with space"
+        assert got["IRWM_CACHE_ROOT"].endswith("/home/cache") and "~" not in got["IRWM_CACHE_ROOT"]
+        assert got["IRWM_CKPT_ROOT"] == "/from/shell"   # shell wins over .env
+        assert got["WANDB_API_KEY"] == "abc123"         # from WANDB_API_KEY_FILE
+
+    def test_env_sh_default_key_file_and_no_override(self, tmp_path):
+        (tmp_path / "home").mkdir()
+        (tmp_path / "home" / ".wandb_api_key").write_text("  fromfile \n")
+        assert self._source_env_sh(tmp_path, "")["WANDB_API_KEY"] == "fromfile"
+        got = self._source_env_sh(tmp_path, "", WANDB_API_KEY="preset")
+        assert got["WANDB_API_KEY"] == "preset"
+
+    def test_submit_sh_builds_sbatch_call(self, tmp_path):
+        stub, record, out_root = tmp_path / "stub", tmp_path / "sbatch_args.txt", tmp_path / "out"
+        stub.mkdir()
+        _write_exe(stub / "sbatch", f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{record.as_posix()}"\n')
+        # `uv run --frozen python <args>` -> this interpreter with <args>
+        py = Path(sys.executable).as_posix()
+        _write_exe(stub / "uv", f'#!/usr/bin/env bash\nshift 3\nexec "{py}" "$@"\n')
+        env = {**os.environ, "IRWM_OUTPUT_ROOT": out_root.as_posix(), "HOME": tmp_path.as_posix(),
+               "PATH": os.pathsep.join([str(stub), os.environ["PATH"]])}
+        env.pop("SBATCH_EXTRA", None)
+        proc = subprocess.run(
+            [BASH, (REPO / "slurm" / "submit.sh").as_posix(), "example_site",
+             "projects/smoke/train.py", "cluster.partition=gpu", "trainer.max_epochs=1"],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr
+        args = record.read_text().splitlines()
+        assert "--job-name=irwm-smoke" in args
+        assert "--partition=gpu" in args and "--gres=gpu:1" in args
+        assert any(a.startswith("--output=") and a.endswith("slurm_logs/%x-%j.out") for a in args)
+        i = args.index("slurm/job.sbatch")
+        assert args[i + 1:] == ["projects/smoke/train.py", "cluster=example_site",
+                                "cluster.partition=gpu", "trainer.max_epochs=1"]
+        assert (out_root / "slurm_logs").is_dir()
+
+
+# --------------------------------------------------------------------------- Smoke run
 def _run_smoke(env_roots: dict[str, Path], *overrides: str) -> dict:
     env = {**os.environ, "WANDB_MODE": "disabled"}
     env.pop("SLURM_JOB_ID", None)
@@ -216,8 +357,8 @@ class TestArchitecture:
 
     def test_dino_foresight_submodule_pinned(self):
         status = _git("submodule", "status", "third_party/DINO-Foresight")
-        assert status.strip().lstrip("+-U ").startswith(DINO_FORESIGHT_COMMIT), status
         assert not status.startswith(("+", "-", "U")), "submodule not initialised or off its pin"
+        assert status.strip().startswith(DINO_FORESIGHT_COMMIT), status
         assert _git("status", "--porcelain", cwd=REPO / "third_party" / "DINO-Foresight") == ""
 
 

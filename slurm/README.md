@@ -1,6 +1,22 @@
 # SLURM
 
-- **Single job:** `sbatch slurm/job.sbatch <entry_point.py> cluster=slurm [overrides...]`, submitted from the repo root. Logs go to `slurm_logs/`.
-- **Sweep (submitit):** `uv run python <entry_point.py> -m cluster=slurm a=1,2`. The resources come from `lib/irwm/conf/cluster/slurm.yaml`.
-- **Preemption:** `--requeue` together with `--signal=SIGUSR1@90` lets Lightning's `SLURMEnvironment(auto_requeue=True)` save a checkpoint and requeue the job. The requeued job keeps its `SLURM_JOB_ID`, so `run_name=slurm-<id>` resolves to the same checkpoint dir and the job resumes.
-- **Before the first run:** fill in the `TODO` values here and in `cluster/slurm.yaml`. Build the env on the login node (`pip install --user uv && uv sync --frozen`). If compute nodes have no internet, set `WANDB_MODE=offline` and `IRWM_NO_UV_RUN=1`.
+All scripts work from any working directory inside the clone. Login nodes need internet; compute nodes do not.
+
+| Script | Run it | What it does |
+|---|---|---|
+| `setup_env.sh` | `bash slurm/setup_env.sh [--test]` once per cluster, and again after `git pull` | Installs uv in user space if needed (`pip --user`, falling back to the standalone installer), inits submodules, runs `uv sync --frozen`, creates `.env` from the example, creates the `IRWM_*` dirs, prints torch/CUDA/driver versions, and verifies the W&B key. `--test` also runs pytest. |
+| `submit.sh` | `slurm/submit.sh <site> <entry.py> [overrides]` | Single job. Derives the sbatch flags from `lib/irwm/conf/cluster/<site>.yaml` (the only place resources are defined) and writes logs to `$IRWM_OUTPUT_ROOT/slurm_logs/`. |
+| `job.sbatch` | (called by `submit.sh`) | Sources `env.sh`, prints job/GPU info, then runs `srun uv run --frozen python <entry.py> ...`. |
+| `env.sh` | `source slurm/env.sh` | Shared env: adds `~/.local/bin` to PATH, loads `.env`, and exports `WANDB_API_KEY` from `$WANDB_API_KEY_FILE` (default `~/.wandb_api_key`). Never overrides variables that are already set. |
+
+## Adding a cluster
+1. `cp lib/irwm/conf/cluster/example_site.yaml lib/irwm/conf/cluster/<site>.yaml`, then set `name`, `partition`, `account`, `qos` and `gres` (and anything else from `cluster/slurm.yaml`). Commit it.
+2. On the login node: `git clone --recurse-submodules ... && bash slurm/setup_env.sh`. Edit `.env` (point the paths at scratch) and re-run.
+3. `slurm/submit.sh <site> projects/smoke/train.py`. Check the log and the W&B run.
+
+## Notes
+- **Sweeps:** `uv run python <entry.py> -m cluster=<site> a=1,2` goes through submitit with the same site config. Each job sources `env.sh` through `hydra.launcher.setup`.
+- **Per-run resources:** `slurm/submit.sh <site> <entry.py> cluster.timeout_min=600 cluster.gres=gpu:2`. Raw extra flags go in `SBATCH_EXTRA="--exclude=node12"`.
+- **Preemption:** `--requeue` and `--signal=SIGUSR1@90` let Lightning save `hpc_ckpt_*.ckpt` and requeue. The job keeps its `SLURM_JOB_ID`, so `run_name=slurm-<id>` points at the same checkpoint dir, and `resume_ckpt_path()` picks up the newest checkpoint. Submitit sweeps requeue through submitit itself and resume from `last.ckpt`.
+- **Small home quota:** set `UV_CACHE_DIR` to scratch before running `setup_env.sh`. The cache is several GB, mostly torch.
+- **Offline compute nodes:** set `WANDB_MODE=offline` (sync later with `uv run wandb sync <dir>`). `IRWM_NO_UV_RUN=1` makes jobs call `.venv/bin/python` directly.

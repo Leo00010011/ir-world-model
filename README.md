@@ -25,11 +25,11 @@ On Windows, `py -m pytest` also works once the venv is active (`.venv\Scripts\ac
 
 ## Cluster (SLURM)
 
-1. On the login node: `pip install --user uv && uv sync --frozen`.
-2. Fill in the `TODO` values in [slurm/job.sbatch](slurm/job.sbatch) and [lib/irwm/conf/cluster/slurm.yaml](lib/irwm/conf/cluster/slurm.yaml).
-3. Submit with `sbatch slurm/job.sbatch projects/smoke/train.py cluster=slurm`, or run a sweep with `uv run python projects/smoke/train.py -m cluster=slurm seed=0,1`.
+1. Once per cluster: copy [example_site.yaml](lib/irwm/conf/cluster/example_site.yaml) to `cluster/<site>.yaml`, fill in partition/account/gres, and commit.
+2. On the login node, run `bash slurm/setup_env.sh --test`. It installs uv if needed, syncs the env, and checks torch/CUDA, the paths and the W&B key. Put the W&B key in `~/.wandb_api_key`.
+3. Submit with `slurm/submit.sh <site> projects/smoke/train.py`, or run a sweep with `uv run python projects/smoke/train.py -m cluster=<site> seed=0,1`.
 
-If compute nodes have no internet, set `WANDB_MODE=offline` and `IRWM_NO_UV_RUN=1`. More details are in [slurm/README.md](slurm/README.md).
+More details are in [slurm/README.md](slurm/README.md).
 
 ## Layout
 

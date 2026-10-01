@@ -1,7 +1,9 @@
 # @package _global_
-# SLURM runs. Used both by `sbatch slurm/job.sbatch <script> cluster=slurm` (single job; the
-# launcher settings below are then ignored) and by `<script> -m cluster=slurm ...` (submitit sweep).
-# Keep the resource values in sync with the #SBATCH lines in slurm/job.sbatch.
+# Generic SLURM base. Do not select it directly: each cluster gets its own site file
+# (cluster/<site>.yaml, see example_site.yaml) that inherits from this one and sets
+# partition/account/gres. Used by:
+#   slurm/submit.sh <site> <entry_point.py> [overrides]   (single job; flags derived from this config)
+#   <entry_point.py> -m cluster=<site> ...                (submitit sweep; uses hydra.launcher below)
 defaults:
   - override /hydra/launcher: submitit_slurm
 
@@ -10,24 +12,26 @@ cluster:
   accelerator: gpu
   devices: 1             # GPUs per node (= tasks per node for Lightning DDP)
   num_nodes: 1
-  num_workers: 8
+  num_workers: 2
   precision: 32-true
-  partition: TODO_PARTITION   # TODO: fill in for your cluster
-  account: null               # TODO: set if your cluster requires --account
-  qos: null                   # TODO: set if your cluster requires --qos
-  gres: "gpu:1"               # TODO: e.g. gpu:a100:1
-  cpus_per_task: 8
-  mem_gb: 32
-  timeout_min: 240
+  partition: null
+  account: null
+  qos: null
+  constraint: null
+  gres: "gpu:1"
+  cpus_per_task: 2
+  mem_gb: 16
+  timeout_min: 30
+  extra_sbatch_args: []  # verbatim extra flags for submit.sh, e.g. ["--exclude=node12"]
   # Same name across requeues (SLURM_JOB_ID is kept on requeue), so jobs resume from their ckpt dir.
   run_name: slurm-${oc.env:SLURM_JOB_ID,nojob}
-
 
 hydra:
   launcher:
     partition: ${cluster.partition}
     account: ${cluster.account}
     qos: ${cluster.qos}
+    constraint: ${cluster.constraint}
     gres: ${cluster.gres}
     cpus_per_task: ${cluster.cpus_per_task}
     mem_gb: ${cluster.mem_gb}
@@ -36,3 +40,6 @@ hydra:
     tasks_per_node: ${cluster.devices}
     max_num_timeout: 3          # automatic requeues on timeout/preemption
     submitit_folder: ${hydra.sweep.dir}/.submitit/%j
+    # Same env loading as slurm/job.sbatch (.env, W&B key file, uv on PATH).
+    setup:
+      - source "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/slurm/env.sh"

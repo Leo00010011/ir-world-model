@@ -39,10 +39,19 @@
 No dataset is touched in F0. In its place, these checks confirm the environment:
 - [x] `uv lock` resolves for both environments. `uv.lock` contains a `torch` entry with a `+cu121` wheel for `linux_x86_64` and a `+cpu` wheel for `win_amd64`.
 - [x] `uv sync` on a clean `.venv` succeeds locally (Windows).
-- [ ] **Manual (user, server):** `pip install --user uv && uv sync --frozen` on the login node, then `uv run python -c "import torch; print(torch.cuda.is_available())"` prints `True` on a GPU node.
-- [ ] **Manual (user, W&B online):** a local `uv run python projects/smoke/train.py` with `WANDB_MODE=online` shows a run in project `ir-world-model`, group `smoke`, whose config contains `git.commit`.
-- [ ] **Manual (user, server):** after the TODOs in `cluster/slurm.yaml` and `slurm/job.sbatch` are filled in, `sbatch slurm/job.sbatch projects/smoke/train.py cluster=slurm` completes, logs to W&B, and writes `result.json`. Optional: `scontrol requeue <jobid>` mid-run, then confirm the job resumes from `last.ckpt`.
-- [ ] **Manual (user, server):** `uv run python projects/smoke/train.py -m cluster=slurm seed=0,1` submits two jobs through submitit.
+- [x] `setup_env.sh --test` runs end to end on the laptop (Git Bash, fake HOME + key file): every step ran, 35 tests passed, exit 0.
+- [ ] **Manual (user, each cluster):** `bash slurm/setup_env.sh --test` on the login node succeeds and reports "W&B: key verified".
+- [ ] **Manual (user, each cluster):** after adding `cluster/<site>.yaml`, `slurm/submit.sh <site> projects/smoke/train.py` completes. The log shows a GPU from `nvidia-smi -L`. The W&B run appears in project `ir-world-model`, group `smoke`, with `git.commit` in its config, and `result.json` is written. Optional: `scontrol requeue <jobid>` mid-run, then confirm `resumed_from` is set.
+- [ ] **Manual (user, optional):** `uv run python projects/smoke/train.py -m cluster=<site> seed=0,1` submits two jobs through submitit.
+
+### Multi-cluster (FR13), covered by tests
+- [x] `cluster=example_site` composes: `name == "example_site"`, `accelerator == "gpu"` (inherited), the launcher is `SlurmLauncher`, and `hydra.launcher.setup` sources `slurm/env.sh`.
+- [x] `sbatch_args` on a full node gives the exact flag list. null/empty fields are omitted; `--mem=64G`; extra args appended.
+- [x] CLI: `example_site` → exit 1 with "TODO" on stderr; with `cluster.partition=gpu cluster.timeout_min=30 seed=3` → exit 0 with `--partition=gpu --time=30`.
+- [x] `load_env` expands `~/irwm/outputs` in `IRWM_OUTPUT_ROOT`.
+- [x] `bash -n` passes on `env.sh`, `job.sbatch`, `submit.sh`, `setup_env.sh`, and none of them has CRLF.
+- [x] `env.sh` on a CRLF `.env` with `export`, quotes, inline comment and `~`: values parsed correctly, shell-set vars win, key read from `WANDB_API_KEY_FILE`. The default `~/.wandb_api_key` (with whitespace trimmed) is used, and a preset `WANDB_API_KEY` wins.
+- [x] `submit.sh` with stub `sbatch`/`uv`: the job name, site-derived flags, `--output` under `$IRWM_OUTPUT_ROOT/slurm_logs`, and pass-through of the entry point and overrides are all correct.
 
 ## Data Architecture Integrity
 - [x] Every path the smoke run writes is under `$IRWM_OUTPUT_ROOT` or `$IRWM_CKPT_ROOT`. The test checks that nothing new appears in the repo's working tree apart from git-ignored paths: `git status --porcelain` is unchanged before and after the smoke subprocess.

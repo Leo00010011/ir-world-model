@@ -1,0 +1,14 @@
+# @package _global_
+# Template for one cluster. Copy to cluster/<site>.yaml (e.g. cluster/snellius.yaml), fill in,
+# commit. Then: slurm/submit.sh <site> projects/smoke/train.py
+defaults:
+  - slurm
+  - _self_
+
+cluster:
+  name: example_site
+  partition: TODO_PARTITION     # sinfo -s
+  account: null                 # sacctmgr show assoc user=$USER format=account
+  qos: null
+  gres: "gpu:1"                 # e.g. gpu:a100:1
+  # Any other field of cluster/slurm.yaml can be overridden here (cpus_per_task, mem_gb, ...).

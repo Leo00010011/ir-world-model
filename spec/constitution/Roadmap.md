@@ -11,7 +11,7 @@ Status legend: ☐ todo · ◐ in progress · ✓ DONE · ⛔ blocked
 ## Phase 0: Foundations and gates
 
 ### F0 · Repository scaffold ◐
-> **Status 2026-10-01:** built and validated locally: `uv sync`, 23 tests passing, smoke train + resume. Spec: `spec/2026-10-01-repository-scaffold/`. **Still to do before ✓ (user, manual):** (1) `wandb login`, then one online local smoke run; (2) on the server, `pip install --user uv && uv sync --frozen` and confirm `torch.cuda.is_available()`; (3) fill in the SLURM `TODO`s, then `sbatch slurm/job.sbatch projects/smoke/train.py cluster=slurm`, and optionally run a submitit sweep.
+> **Status 2026-10-01:** built and validated locally: `uv sync`, 23 tests passing, smoke train + resume. Spec: `spec/2026-10-01-repository-scaffold/`. Multi-cluster support was added the same day: per-site Hydra cluster configs, `slurm/setup_env.sh`, `slurm/submit.sh`, and the W&B key loaded from `~/.wandb_api_key`. 35 tests pass. **Still to do before ✓ (user, manual):** on each cluster, add `cluster/<site>.yaml`, run `bash slurm/setup_env.sh --test`, then `slurm/submit.sh <site> projects/smoke/train.py` (GPU and W&B online). Optionally run a submitit sweep.
 
 The uv workspace (`pyproject.toml`, `lib/irwm` editable package, `projects/*` members) with `git init` and `.gitignore`. It also covers:
 - env-var path resolution (`irwm.utils.paths`)
