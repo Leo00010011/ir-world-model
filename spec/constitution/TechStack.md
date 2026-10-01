@@ -6,8 +6,8 @@ This file lists every technology choice, where code lives, and the rules all fea
 
 | Item | Choice | Notes |
 |---|---|---|
-| Language | Python 3.11 | DINO-Foresight is tested on 3.11 |
-| Env / packaging | **pip + `venv`** (standard library only, no extra tooling) | `python -m venv .venv` → `pip install -r requirements.txt` → `pip install -e lib`. See §1.1 |
+| Language | Python 3.11 | Pinned in `.python-version`; DINO-Foresight is tested on 3.11 |
+| Env / packaging | **uv** (workspace) | Root `pyproject.toml` + `uv.lock`. `uv sync` on the laptop and on the cluster gives identical envs. See §1.1 |
 | Deep learning | PyTorch (CUDA build on the cluster, CPU build is fine locally) | DINO-Foresight pins torch 2.2.0 / torchvision 0.17.0 (cu121); we start from that and only move if needed |
 | Training loop | **PyTorch Lightning** (`lightning`) | Every trainable model is a `LightningModule`; data comes from `LightningDataModule`s |
 | Configuration | **Hydra** (`hydra-core`, OmegaConf) | Every entry point is a `@hydra.main` script; no argparse |
@@ -16,30 +16,26 @@ This file lists every technology choice, where code lives, and the rules all fea
 | Cluster | **SLURM** through `hydra-submitit-launcher` plus plain `sbatch` templates in `slurm/` | See §5 |
 | Feature storage | **HDF5** (`h5py`) | See §4 |
 | Detection metrics | `pycocotools` (COCO eval), with our own wrapper for the 3-class mapping, per-horizon breakdown and bootstrap CIs | |
-| Testing | `pytest` | Run with `python -m pytest tests/...` inside the venv (`py -m pytest` on Windows) |
+| Testing | `pytest` | Run locally with `py -m pytest tests/...` (Windows) or `uv run pytest` |
 | Local OS | Windows 11 (development) | Code must be path-agnostic (`pathlib`) and must not assume POSIX-only tools |
 | Cluster OS | Linux + SLURM | |
 
-### 1.1 Dependency policy
-The code runs on an external server, so we **keep third-party packages to a minimum**. Use only pip and the standard library's `venv`; do not use uv, conda, poetry or similar.
-- **`requirements.txt`** (repo root) lists only the direct dependencies, each pinned with `==`. Adding a package is a deliberate choice: the spec that introduces it must say why, and the standard library or an existing dependency must not already cover the need.
-- **`requirements-lock.txt`** is the output of `pip freeze` from a working server env. It is committed and regenerated whenever `requirements.txt` changes, so the exact env can be rebuilt.
-- **PyTorch is installed separately**, before the requirements, from the CUDA wheel index (`pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cu121`). This keeps the CUDA build out of `requirements.txt`, so the same file also works for the CPU install on the laptop.
-- `lib/` is installed editable with `pip install -e lib`. Its `lib/pyproject.toml` uses the standard setuptools backend and declares no dependencies of its own; `requirements.txt` is the single source of truth.
-- `projects/*` are **not** packages. Their entry points are run as scripts (`python projects/<name>/<entry>.py`) and import `irwm`.
-- Everything must also install on a server **without internet on compute nodes**. Build the venv on a login node, or with `pip download` into a wheelhouse plus `pip install --no-index --find-links`.
+### 1.1 Installing on the external server
+- uv needs no admin rights. Install it in user space with `pip install --user uv` (or the official standalone installer, which writes to `~/.local/bin`).
+- Build the env on a node with internet (usually the login node). If compute nodes are offline, they then only use the existing `.venv`.
+- PyTorch's CUDA build (cu121, matching DINO-Foresight) is selected through a `[tool.uv.sources]` / index entry in `pyproject.toml`, so `uv sync` installs the CUDA wheels on Linux and the CPU wheels on the Windows laptop.
 
 ## 2. Repository layout (monorepo)
 
 ```
 ir-world-model/
-├── requirements.txt            # direct deps, pinned (==); torch installed separately (§1.1)
-├── requirements-lock.txt       # pip freeze of the working server env
+├── pyproject.toml              # uv workspace root (members: lib, projects/*)
+├── uv.lock
 ├── spec/
 │   ├── constitution/           # Mission.md, TechStack.md, Roadmap.md (this folder)
 │   └── YYYY-MM-DD-<feature>/   # one folder per feature: requirements.md, plan.md, validation.md
 ├── lib/                        # shared code, installed editable as package `irwm`
-│   ├── pyproject.toml          # setuptools only, no deps; `pip install -e lib`
+│   ├── pyproject.toml
 │   └── irwm/
 │       ├── data/               # FLIR readers, clip builders, class mappings, transforms
 │       ├── features/           # DINOv2 encoder wrapper + PCA, HDF5 feature cache read/write
@@ -151,7 +147,7 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 
 | Component | Location | Feature | Status |
 |---|---|---|---|
-| pip requirements, `irwm` package skeleton, env-var path resolution | `requirements*.txt`, `lib/pyproject.toml`, `lib/irwm/utils/paths.py` | F0 | ☐ |
+| uv workspace, `irwm` package skeleton, env-var path resolution | `pyproject.toml`, `lib/irwm/utils/paths.py` | F0 | ☐ |
 | FLIR ADAS v2 readers (images, video, COCO labels) | `lib/irwm/data/` | F2 | ☐ |
 | Canonical class mapping | `lib/irwm/data/classes.py` | F2 | ☐ |
 | Video clip builder (30 FPS → stride 5, 4 ctx + 6 future) | `lib/irwm/data/clips.py` | F3 | ☐ |

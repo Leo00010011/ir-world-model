@@ -11,14 +11,14 @@ Status legend: ☐ todo · ◐ in progress · ✓ DONE · ⛔ blocked
 ## Phase 0: Foundations and gates
 
 ### F0 · Repository scaffold ☐
-The pip-based setup (`requirements.txt` with pinned direct deps, `lib/irwm` installed with `pip install -e lib`, `projects/*` as plain script folders; see TechStack §1.1) with `git init` and `.gitignore`. It also covers:
+The uv workspace (`pyproject.toml`, `lib/irwm` editable package, `projects/*` members) with `git init` and `.gitignore`. It also covers:
 - env-var path resolution (`irwm.utils.paths`)
 - base Hydra configs (`paths`, `cluster`, `wandb` groups)
 - one `slurm/` sbatch template and a submitit launcher config
 - pytest setup (with a `data` marker)
 - DINO-Foresight (`Sta8is/DINO-Foresight`) added as a pinned git submodule under `third_party/`
 
-**Done when:** a fresh `venv` + `pip install -r requirements.txt` + `pip install -e lib` works locally and on the server, `requirements-lock.txt` is committed, `python -m pytest` passes, and a dummy Hydra entry point runs locally and through SLURM with W&B logging.
+**Done when:** `uv sync` works locally and on the server (uv installed there with `pip install --user uv`), `py -m pytest` passes, and a dummy Hydra entry point runs locally and through SLURM with W&B logging.
 **Depends on:** none.
 
 ### F1 · DINO-Foresight audit (GATE) ☐
