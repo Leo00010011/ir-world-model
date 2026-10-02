@@ -38,12 +38,15 @@ The uv workspace (`pyproject.toml`, `lib/irwm` editable package, `projects/*` me
 > - **Found from the checkpoint itself:**
 >   - The saved args come from an older `train.py`: `sliding_window_inference` and `high_res_adapt` are missing. They are filled from the released `train.py` defaults and recorded in the diff.
 >   - Saved args: 448×896, `d_layers 2,5,8,11`, `sequence_length 5`, `simple_replace` masking with `full_mask`, `16-mixed` precision, `no_timestep_augm=False` (the high-res fine-tune also used random strides).
-> - **Partial results** (sections 1–3, from an unauthorised local CPU run, not the official record):
+> - **Weights and recipe** (sections 1–3, from an unauthorised local CPU run, not re-run on the cluster):
 >   - manifests OK; 0 missing or unexpected keys; 258 M world-model params;
 >   - checkpoint DINOv2 and PCA tensors are identical to the official files (|Δ| = 0); `PCABasis` = reference (|Δ| = 0);
 >   - 2048 tokens × 3072 dims; intermediate layers = block hooks + final norm (|Δ| = 0);
 >   - demo z-score stds average 1.00; PCA explains 90.5 % of demo variance.
-> - **Next (user, on ctcomp3):** `git pull && uv sync`; `uv run python projects/dinof_audit/download.py` (login node, ~7.4 GB); `slurm/submit.sh ctcomp3 projects/dinof_audit/audit.py cluster.timeout_min=60 cluster.mem_gb=32`. Then write `audit.md` from `audit_results.json`, decide R5/R7 and the DINOv2 pin, and apply the TechStack corrections. **All F1 compute runs on the cluster.**
+> - **Scope reduced (user decision, 2026-10-02).** Only the R5 probe was run on the cluster. The rollout/precision/determinism checks, the DINOv2 hub-version comparison and the qualitative segmentation check are **deferred**, to be run only if an issue appears. They are already implemented: `audit.py sections=[...]`. Decisions in the meantime:
+>   - **Precision and rollout:** follow the reference (`16-mixed`, rollout in PCA space).
+>   - **DINOv2 hub code:** pinned to `dinof_release` (`85a24602`) without comparing versions. The weights are identical to the official ones; only the hub *code* is unpinned upstream.
+> - **R5 probe** (ctcomp3, job 5523595, W&B run `a1oln6go`, `~/irwm/outputs/dinof_audit/2026-10-02/13-56-09/audit_results.json`) → see **R5** below. **The decision is deferred to training time** (before F5 builds the cache).
 Read the released code and check it against the paper before building anything on top of it. The output is an audit note in the spec folder that corrects `TechStack.md §3.1/§3.3` wherever the code disagrees with the paper. Questions to answer:
 - **(a) Checkpoints.** Download `dinof_highres.ckpt`, `dinof_lowres.ckpt` and the PCA file from Hugging Face, and confirm that they load. Note the licence of the weights.
 - **(b) Feature recipe, exactly:**
@@ -57,7 +60,7 @@ Read the released code and check it against the paper before building anything o
 - **(e) Detection support.** Is there any detection or instance head we could reuse, such as the Mask2Former head from the paper?
 - **(f) Smoke test.** Run one forward pass and a 3-step rollout on dummy features on a GPU.
 
-**Done when:** the audit note answers (a)–(f), the resolution policy and the feature-cache contents are decided (R5, R7), and TechStack is updated.
+**Done when:** the audit note answers (a)–(f), the feature-cache contents are decided (R7), and TechStack is updated. *(2026-10-02: R5 was taken out of F1's gate. The probe data is recorded in R5, and the decision is made at training time, before F5.)*
 **Depends on:** F0. **Blocks:** F4, F10.
 
 ---
@@ -74,7 +77,7 @@ Parse the video test split into sequences and recover frame order and timestamps
 **Depends on:** F2 (and F1 for the stride).
 
 ### F4 · DINOv2 encoder wrapper ☐
-`irwm.features.encoder`: a frozen DINOv2-Reg ViT-B/14 that follows the recipe confirmed in F1 (blocks 3/6/9/12 concatenated → 3072-d, then DINO-Foresight's PCA → 1152-d), using the resolution policy from F1, with 1→3 channel replication for thermal. Exposes both `encode_full` (3072-d) and `encode_pca` (1152-d), plus `pca_inverse`. Must produce **numerically identical** features to DINO-Foresight's own extraction on the same image (within an fp tolerance).
+`irwm.features.encoder`: a frozen DINOv2-Reg ViT-B/14 that follows the recipe confirmed in F1 (blocks 3/6/9/12 concatenated → 3072-d, then DINO-Foresight's PCA → 1152-d), with the resolution policy as a config option (R5 is still open: implement (a) stretch, (b) crop and (c) native; (d) two windows only if R5 picks it), with 1→3 channel replication for thermal. Exposes both `encode_full` (3072-d) and `encode_pca` (1152-d), plus `pca_inverse`. Must produce **numerically identical** features to DINO-Foresight's own extraction on the same image (within an fp tolerance).
 **Depends on:** F0, F1.
 
 ### F5 · Feature cache builder ☐
@@ -170,7 +173,7 @@ Generalisation check: apply the best technique to RGB and, if feasible, to anoth
 | R2 | The FLIR video test split is small (~3.7k frames per modality, a few sequences), so there may be few clips and wide confidence intervals. Use bootstrap CIs over clips. | F3, F6 |
 | R3 | FLIR has few *large* objects. The primary metric is now AP/AP50 over all sizes, but small objects on a 14-px patch grid may give low absolute AP. | F2 stats, F9 |
 | R4 | 1→3 channel replication for thermal is a design choice that may itself hurt DINOv2 IR features. | F4 / F9 |
-| R5 | **Aspect ratio.** DINO-Foresight was trained at 448×896 (2:1, Cityscapes). FLIR thermal is 640×512 (5:4) and RGB varies. Options: (a) stretch to 448×896, which distorts by about 1.6× and is faithful to the input size; (b) crop to 2:1 and resize, which loses the top and bottom of the frame and boxes there; (c) native aspect (e.g. 448×560 → 32×40 tokens), only if (d) of the F1 audit shows the model accepts other grids. | F1 |
+| R5 | **Aspect ratio. OPEN: decide at training time, before F5** (it fixes the cache grid and both detectors, so changing it later means re-encoding everything and retraining). DINO-Foresight was trained at 448×896 (2:1 → 32×64 tokens of 14 px). FLIR thermal is 640×512 (5:4) and RGB varies. Options, with px of the original FLIR frame per token: **(a)** stretch to 448×896: full frame, trained size, ~1.6× distortion, 10×16 px/token. **(b)** crop the central 2:1 band, then resize to 448×896: no distortion, trained size, but drops 96 rows top and 96 bottom (37.5 % of the frame; boxes lost or truncated there), 10×10 px/token. **(c)** native 448×560: full frame, no distortion, but an untrained 32×40 grid (37.5 % fewer tokens, positional embeddings interpolated 64→40) and 16×16 px/token. **(d)** two overlapping 2:1 windows (top and bottom) merged: full frame, no distortion, trained grid, but 2× cache and compute (reference `sliding_window_inference` code exists). Not tested. **F1 probe** (one Cityscapes demo clip center-cropped to 5:4; 1-step; ratio = model SmoothL1 ÷ copy-last SmoothL1 in PCA space, lower is better): uncropped 2:1 reference 0.607; (a) 0.662; (b) 0.551; (c) 0.648. **Reading:** every policy beats copy-last by 34–45 %, so neither the stretch nor the 32×40 grid breaks the model. (a) and (c) are tied within noise (one clip). (b)'s win is likely because the central band is easier: it even beats the uncropped reference, and it pays with the lost field of view. The metric measures forecasting only, not small-object detection (R3). **Before deciding:** repeat the probe on a few FLIR RGB/IR clips (no labels needed), and weigh field of view and px/token against detection needs. Provisional preference: (a). | before F5 |
 | R6 | Phase 4 needs unlabeled IR video that is disjoint from test. | F14 |
 | R7 | **PCA basis fit on Cityscapes RGB.** It may truncate IR features more than RGB, which would confound H1 and H2. Caching full 3072-d features would cost about 420 GB, against about 160 GB for the PCA cache. Default: cache PCA features, and measure the PCA loss on a subset with full features. | F1, F9, F13 |
 | R8 | DINO-Foresight is **deterministic** (SmoothL1 regression), so predictions may be blurred toward the mean. That is part of what H3 measures, but it also means no sampling and no best-of-N. | F13 |
