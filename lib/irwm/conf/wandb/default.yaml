@@ -1,0 +1,6 @@
+project: ${oc.env:WANDB_PROJECT,ir-world-model}
+entity: ${oc.env:WANDB_ENTITY,null}
+mode: ${oc.env:WANDB_MODE,online}   # online | offline (compute nodes without internet) | disabled
+group: ${project}
+tags: []
+log_model: false

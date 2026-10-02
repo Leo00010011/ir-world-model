@@ -10,12 +10,14 @@ dist/
 # Local secrets / env
 .env
 
-# Run artefacts (normally under $IRWM_OUTPUT_ROOT, but guard against local spills)
-outputs/
-multirun/
-wandb/
-lightning_logs/
-slurm_logs/
+# Run artefacts (normally under $IRWM_OUTPUT_ROOT, but guard against local spills).
+# Anchored with a leading "/" on purpose: an unanchored `wandb/` also ignored the
+# Hydra config group lib/irwm/conf/wandb/.
+/outputs/
+/multirun/
+/wandb/
+/lightning_logs/
+/slurm_logs/
 slurm-*.out
 
 # Large binaries (weights, caches) never go in git

@@ -350,6 +350,18 @@ class TestSmokeRun:
 
 # --------------------------------------------------------------------------- Architecture
 class TestArchitecture:
+    def test_source_files_tracked_by_git(self):
+        # Guards against .gitignore rules swallowing source (an unanchored `wandb/` once hid
+        # lib/irwm/conf/wandb/, so a fresh clone had no wandb config group).
+        sources = [p for d in ("lib", "projects", "slurm", "tests")
+                   for p in (REPO / d).rglob("*")
+                   if p.suffix in {".py", ".yaml", ".sh", ".sbatch", ".toml"}
+                   and ".venv" not in p.parts and "__pycache__" not in p.parts]
+        rel = [p.relative_to(REPO).as_posix() for p in sources]
+        ignored = subprocess.run(["git", "check-ignore", "--no-index", *rel], cwd=REPO,
+                                 capture_output=True, text=True).stdout.split()
+        assert ignored == [], f"source files ignored by .gitignore: {ignored}"
+
     def test_lib_does_not_import_projects(self):
         pattern = re.compile(r"^\s*(from|import)\s+projects\b", re.M)
         for f in (REPO / "lib").rglob("*.py"):

@@ -7,7 +7,7 @@ defaults:
 
 cluster:
   name: ctcomp3
-  partition: defaultPartition*     # sinfo -s
+  partition: defaultPartition   # sinfo -s ("*" there only marks the default partition)
   account: citius                 # sacctmgr show assoc user=$USER format=account
   qos: null
   gres: "gpu:1"                 # e.g. gpu:a100:1
