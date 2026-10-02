@@ -16,6 +16,15 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+# Only needed to run the unmodified DINO-Foresight reference code (irwm.worldmodel.reference).
+reference = [
+    "timm>=0.9",
+    "einops>=0.7",
+    # Pinned as in DINO-Foresight's requirements.txt: the released PCA is a pickled sklearn object.
+    "scikit-learn==1.5.2",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

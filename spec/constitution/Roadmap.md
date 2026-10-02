@@ -10,8 +10,8 @@ Status legend: ☐ todo · ◐ in progress · ✓ DONE · ⛔ blocked
 
 ## Phase 0: Foundations and gates
 
-### F0 · Repository scaffold ◐
-> **Status 2026-10-01:** built and validated locally: `uv sync`, 23 tests passing, smoke train + resume. Spec: `spec/2026-10-01-repository-scaffold/`. Multi-cluster support was added the same day: per-site Hydra cluster configs, `slurm/setup_env.sh`, `slurm/submit.sh`, and the W&B key loaded from `~/.wandb_api_key`. 35 tests pass. **Still to do before ✓ (user, manual):** on each cluster, add `cluster/<site>.yaml`, run `bash slurm/setup_env.sh --test`, then `slurm/submit.sh <site> projects/smoke/train.py` (GPU and W&B online). Optionally run a submitit sweep.
+### F0 · Repository scaffold ✓ DONE (2026-10-02)
+> Spec: `spec/2026-10-01-repository-scaffold/`. 36 tests pass on the laptop and on ctcomp3. The env is built with `slurm/setup_env.sh`, and the GPU smoke job was run on ctcomp3 through `slurm/submit.sh`. Includes multi-cluster support (`cluster/<site>.yaml`), with the W&B key read from `~/.wandb_api_key`.
 
 The uv workspace (`pyproject.toml`, `lib/irwm` editable package, `projects/*` members) with `git init` and `.gitignore`. It also covers:
 - env-var path resolution (`irwm.utils.paths`)
@@ -23,7 +23,27 @@ The uv workspace (`pyproject.toml`, `lib/irwm` editable package, `projects/*` me
 **Done when:** `uv sync` works locally and on the server (uv installed there with `pip install --user uv`), `py -m pytest` passes, and a dummy Hydra entry point runs locally and through SLURM with W&B logging.
 **Depends on:** none.
 
-### F1 · DINO-Foresight audit (GATE) ☐
+### F1 · DINO-Foresight audit (GATE) ◐
+> **Status 2026-10-02.** Spec: `spec/2026-10-02-dino-foresight-audit/`. The code is built and its 19 CPU tests pass (55 in the whole suite). Not committed yet.
+> - **Built:** `irwm.worldmodel.assets` (pinned HF revision `9174a31e` and DINOv2 hub commits, SHA-256 manifests); `irwm.features.pca.PCABasis` (pure-torch PCA, no sklearn); `irwm.worldmodel.reference` (runs the unmodified `Dino_f` offline from the pinned DINOv2 copy); `projects/dinof_audit/` (`download.py`, `pca_export.py`, `audit.py` with 7 sections).
+> - **Found in the code read** (to be confirmed by the audit run):
+>   - `torch.hub` loads the unpinned DINOv2 `main` at runtime.
+>   - The final LayerNorm is applied to every intermediate block, and CLS + 4 registers are dropped.
+>   - PCA standardises each dimension before projecting, with no whitening.
+>   - The rollout feeds back in PCA space.
+>   - Training sampled strides of 2–4 frames (17 Hz) at random; evaluation uses stride 3, frames 7,10,13,16 → 19.
+>   - Positional embeddings are factorised tables that can be interpolated.
+>   - The only heads are DPT heads (segm/depth/normals), applied to PCA-reconstructed 3072-d features. No detection head.
+>   - The README's PCA layers `2,5,9,11` are wrong; the code uses `2,5,8,11`.
+> - **Found from the checkpoint itself:**
+>   - The saved args come from an older `train.py`: `sliding_window_inference` and `high_res_adapt` are missing. They are filled from the released `train.py` defaults and recorded in the diff.
+>   - Saved args: 448×896, `d_layers 2,5,8,11`, `sequence_length 5`, `simple_replace` masking with `full_mask`, `16-mixed` precision, `no_timestep_augm=False` (the high-res fine-tune also used random strides).
+> - **Partial results** (sections 1–3, from an unauthorised local CPU run, not the official record):
+>   - manifests OK; 0 missing or unexpected keys; 258 M world-model params;
+>   - checkpoint DINOv2 and PCA tensors are identical to the official files (|Δ| = 0); `PCABasis` = reference (|Δ| = 0);
+>   - 2048 tokens × 3072 dims; intermediate layers = block hooks + final norm (|Δ| = 0);
+>   - demo z-score stds average 1.00; PCA explains 90.5 % of demo variance.
+> - **Next (user, on ctcomp3):** `git pull && uv sync`; `uv run python projects/dinof_audit/download.py` (login node, ~7.4 GB); `slurm/submit.sh ctcomp3 projects/dinof_audit/audit.py cluster.timeout_min=60 cluster.mem_gb=32`. Then write `audit.md` from `audit_results.json`, decide R5/R7 and the DINOv2 pin, and apply the TechStack corrections. **All F1 compute runs on the cluster.**
 Read the released code and check it against the paper before building anything on top of it. The output is an audit note in the spec folder that corrects `TechStack.md §3.1/§3.3` wherever the code disagrees with the paper. Questions to answer:
 - **(a) Checkpoints.** Download `dinof_highres.ckpt`, `dinof_lowres.ckpt` and the PCA file from Hugging Face, and confirm that they load. Note the licence of the weights.
 - **(b) Feature recipe, exactly:**

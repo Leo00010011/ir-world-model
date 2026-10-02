@@ -40,8 +40,8 @@ No dataset is touched in F0. In its place, these checks confirm the environment:
 - [x] `uv lock` resolves for both environments. `uv.lock` contains a `torch` entry with a `+cu121` wheel for `linux_x86_64` and a `+cpu` wheel for `win_amd64`.
 - [x] `uv sync` on a clean `.venv` succeeds locally (Windows).
 - [x] `setup_env.sh --test` runs end to end on the laptop (Git Bash, fake HOME + key file): every step ran, 35 tests passed, exit 0.
-- [ ] **Manual (user, each cluster):** `bash slurm/setup_env.sh --test` on the login node succeeds and reports "W&B: key verified".
-- [ ] **Manual (user, each cluster):** after adding `cluster/<site>.yaml`, `slurm/submit.sh <site> projects/smoke/train.py` completes. The log shows a GPU from `nvidia-smi -L`. The W&B run appears in project `ir-world-model`, group `smoke`, with `git.commit` in its config, and `result.json` is written. Optional: `scontrol requeue <jobid>` mid-run, then confirm `resumed_from` is set.
+- [x] **Manual (user, ctcomp3):** `bash slurm/setup_env.sh --test` on the login node succeeds and reports "W&B: key verified".
+- [x] **Manual (user, ctcomp3):** after adding `cluster/<site>.yaml`, `slurm/submit.sh <site> projects/smoke/train.py` completes. The log shows a GPU from `nvidia-smi -L`. The W&B run appears in project `ir-world-model`, group `smoke`, with `git.commit` in its config, and `result.json` is written. Optional: `scontrol requeue <jobid>` mid-run, then confirm `resumed_from` is set.
 - [ ] **Manual (user, optional):** `uv run python projects/smoke/train.py -m cluster=<site> seed=0,1` submits two jobs through submitit.
 
 ### Multi-cluster (FR13), covered by tests

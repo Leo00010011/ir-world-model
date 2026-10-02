@@ -3,7 +3,7 @@ name = "ir-world-model"
 version = "0.1.0"
 description = "Representation quality of latent world-model predictions under IR domain shift (DINO-Foresight on FLIR ADAS v2)."
 requires-python = ">=3.11,<3.12"
-dependencies = ["irwm", "irwm-smoke"]
+dependencies = ["irwm", "irwm-smoke", "irwm-dinof-audit"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -22,6 +22,7 @@ members = ["lib", "projects/*"]
 [tool.uv.sources]
 irwm = { workspace = true }
 irwm-smoke = { workspace = true }
+irwm-dinof-audit = { workspace = true }
 torch = [
     { index = "pytorch-cu121", marker = "sys_platform == 'linux'" },
     { index = "pytorch-cpu", marker = "sys_platform == 'win32'" },

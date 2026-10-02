@@ -1,0 +1,19 @@
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: dinof_audit
+
+device: auto              # auto -> cuda if available, else cpu
+sections: [artefacts, weights, recipe, rollout, hub, r5, segm]
+hub_versions: [pre378, dinof_release, main_2026]
+r5:
+  crop_aspect: [5, 4]     # FLIR thermal 640x512
+  native_size: [448, 560] # 32x40 tokens, closest multiple of 14 to 5:4 at height 448
+  tie_tolerance: 0.05     # prefer stretch (a) if within 5 % of the best ratio
+precision_check: true
+timing_repeats: 5

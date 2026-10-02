@@ -45,6 +45,7 @@ ir-world-model/
 │       └── utils/              # paths/env resolution, seeding, logging, SLURM helpers
 ├── projects/                   # one folder per research project; entry points + configs only
 │   ├── smoke/                  # permanent env/cluster health check (toy Lightning run)
+│   ├── dinof_audit/            # F1: download/pin DINO-Foresight artefacts, audit the reference code
 │   ├── feature_extraction/     # build the DINOv2 caches
 │   │   ├── conf/               # Hydra configs
 │   │   └── *.py                # @hydra.main entry points
@@ -62,6 +63,7 @@ Rules:
 - **Reusable logic goes in `lib/irwm`.** Project folders hold only Hydra entry points, configs and project-specific glue. If two projects need the same function, it moves to `lib/`.
 - A project folder may later get its own `spec/`-style constitution once it grows large enough.
 - **Hydra wiring:** shared config groups live in `lib/irwm/conf/`. A project's primary config uses `defaults: [irwm_base, _self_]` and `hydra.searchpath: ["pkg://irwm.conf"]`, and sets `project: <folder name>`. Every entry point calls `irwm.utils.paths.load_env()` at import time, before `@hydra.main`. `run_name` comes from the cluster group (a timestamp locally, `slurm-<job id>` on SLURM, which is stable across requeues). Checkpoints go to `${paths.ckpt_root}/<project>/${run_name}/`, with the trainer's `default_root_dir` set to that dir, and training resumes with `resume_ckpt_path()`.
+- **Reference-only deps:** `pytorch_lightning`, `timm`, `einops` and `scikit-learn==1.5.2` are needed only to run DINO-Foresight's own code. They live in the optional extra `irwm[reference]` (used by `projects/dinof_audit`) and are imported lazily, so `lib/irwm` imports without them. A test enforces that there are no module-level imports.
 - **Dependencies:** deps shared by all projects (torch, lightning, hydra, wandb, …) are declared in `lib/pyproject.toml`. Each feature adds its own deps there, or to its project's `pyproject.toml` if only that project needs them.
 - `lib/irwm` must never import from `projects/`.
 - Third-party code (DINO-Foresight) is used only through an adapter in `irwm/worldmodel/`. We do not patch the submodule. If a change is unavoidable, it is kept as a patch file with its reason recorded in the spec.
@@ -152,13 +154,13 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 
 | Component | Location | Feature | Status |
 |---|---|---|---|
-| uv workspace, `irwm` package skeleton, env-var path resolution | `pyproject.toml`, `lib/irwm/utils/paths.py` | F0 | ✓ (local; server check pending) |
+| uv workspace, `irwm` package skeleton, env-var path resolution | `pyproject.toml`, `lib/irwm/utils/paths.py` | F0 | ✓ |
 | Git provenance + W&B logger factory (`git_info`, `make_wandb_logger`) | `lib/irwm/utils/tracking.py` | F0 | ✓ |
 | SLURM helpers (`on_slurm`, `cluster_plugins`, `resume_ckpt_path`, `sbatch_args`; CLI `python -m irwm.utils.slurm <site>`) | `lib/irwm/utils/slurm.py` | F0 | ✓ |
 | Shared Hydra groups (`irwm_base`, `paths`, `cluster/{local,slurm}`, `wandb`) | `lib/irwm/conf/` (`pkg://irwm.conf`) | F0 | ✓ |
 | Smoke project (Hydra + Lightning + W&B + requeue health check) | `projects/smoke/` | F0 | ✓ |
 | Cluster scripts: `setup_env.sh` (per-cluster env bootstrap), `submit.sh` (site config → sbatch), `job.sbatch`, `env.sh` (.env + W&B key file) | `slurm/` | F0 | ✓ |
-| Per-cluster site configs (template `example_site.yaml`) | `lib/irwm/conf/cluster/<site>.yaml` | F0 | ☐ user adds one per cluster |
+| Per-cluster site configs (template `example_site.yaml`; sites: `ctcomp3`) | `lib/irwm/conf/cluster/<site>.yaml` | F0 | ✓ |
 | DINO-Foresight submodule @ `d98f765` | `third_party/DINO-Foresight` | F0 | ✓ |
 | FLIR ADAS v2 readers (images, video, COCO labels) | `lib/irwm/data/` | F2 | ☐ |
 | Canonical class mapping | `lib/irwm/data/classes.py` | F2 | ☐ |
@@ -168,3 +170,7 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | DINO-DETR head | `lib/irwm/detection/` | F7 | ☐ |
 | COCO evaluator (3-class AP/AP50, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
 | DINO-Foresight adapter + prediction cache | `lib/irwm/worldmodel/` | F10–F11 | ☐ |
+| Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ◐ built; cluster download pending |
+| `PCABasis`: DINO-Foresight PCA in pure torch (`transform`/`inverse`, 3072↔1152), loaded from the exported `pca_1152.pt` | `lib/irwm/features/pca.py` | F1 | ◐ built; equals the reference (\|Δ\| = 0, local check) |
+| Reference loader: unmodified `Dino_f` with the checkpoint's args, DINOv2 routed to the pinned local copy, `train_py_defaults` for missing args, demo-frame loader | `lib/irwm/worldmodel/reference.py` | F1 | ◐ built |
+| Audit project (`download.py`, `pca_export.py`, `audit.py`) | `projects/dinof_audit/` | F1 | ◐ awaiting ctcomp3 run |
