@@ -277,7 +277,7 @@ def section_rollout(ctx: Ctx) -> dict:
 
         # Dummy PCA-space inputs, batch 2
         g = torch.Generator().manual_seed(0)
-        xd = (torch.randn(2, 5, 32, 64, 1152, generator=g) * x.std()).to(ctx.device)
+        xd = torch.randn(2, 5, 32, 64, 1152, generator=g).to(ctx.device) * x.std()
         pd, _ = one_step(model, xd)
         out["dummy_batch2"] = {"shape": list(pd.shape), "finite": bool(torch.isfinite(pd).all())}
 

@@ -1,0 +1,289 @@
+{
+  "git": {
+    "commit": "2c8d7e6207417e9f2ffeca752b0dd9167a4d6a4f",
+    "dirty": false
+  },
+  "config": {
+    "paths": {
+      "data_root": "/mnt/beegfs/home/leonardo.ulloa/irwm/data",
+      "cache_root": "/mnt/beegfs/home/leonardo.ulloa/irwm/cache",
+      "ckpt_root": "/mnt/beegfs/home/leonardo.ulloa/irwm/checkpoints",
+      "output_root": "/mnt/beegfs/home/leonardo.ulloa/irwm/outputs"
+    },
+    "cluster": {
+      "name": "ctcomp3",
+      "accelerator": "gpu",
+      "devices": 1,
+      "num_nodes": 1,
+      "num_workers": 2,
+      "precision": "32-true",
+      "partition": "defaultPartition",
+      "account": "citius",
+      "qos": null,
+      "constraint": null,
+      "gres": "gpu:1",
+      "cpus_per_task": 2,
+      "mem_gb": 32,
+      "timeout_min": 30,
+      "extra_sbatch_args": [],
+      "run_name": "slurm-5524144"
+    },
+    "wandb": {
+      "project": "ir-world-model",
+      "entity": null,
+      "mode": "online",
+      "group": "dinof_audit",
+      "tags": [],
+      "log_model": false
+    },
+    "project": "dinof_audit",
+    "run_name": "slurm-5524144",
+    "seed": 0,
+    "device": "auto",
+    "sections": [
+      "artefacts",
+      "weights",
+      "recipe",
+      "rollout"
+    ],
+    "hub_versions": [
+      "pre378",
+      "dinof_release",
+      "main_2026"
+    ],
+    "r5": {
+      "crop_aspect": [
+        5,
+        4
+      ],
+      "native_size": [
+        448,
+        560
+      ],
+      "tie_tolerance": 0.05
+    },
+    "precision_check": true,
+    "timing_repeats": 5
+  },
+  "hf_revision": "9174a31e86c0ccd4df68c8c51f92ccce3313657a",
+  "dinov2_hub_pinned": {
+    "dinof_release": "85a24602099d397264d5b30461ad7f3bfd726ca1"
+  },
+  "device": "cuda",
+  "torch": "2.2.0+cu121",
+  "errors": {
+    "rollout": "Traceback (most recent call last):\n  File \"/mnt/beegfs/home/leonardo.ulloa/projects/ir-world-model/projects/dinof_audit/audit.py\", line 433, in main\n    results[name] = SECTIONS[name](ctx)\n                    ^^^^^^^^^^^^^^^^^^^\n  File \"/mnt/beegfs/home/leonardo.ulloa/projects/ir-world-model/projects/dinof_audit/audit.py\", line 280, in section_rollout\n    xd = (torch.randn(2, 5, 32, 64, 1152, generator=g) * x.std()).to(ctx.device)\n          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~\nRuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!\n"
+  },
+  "artefacts": {
+    "verify_manifest": {
+      "dinof_dir": [],
+      "dinov2_hub_dir": []
+    },
+    "checkpoint": {
+      "top_level_keys": [
+        "MixedPrecision",
+        "callbacks",
+        "epoch",
+        "global_step",
+        "hparams_name",
+        "hyper_parameters",
+        "loops",
+        "lr_schedulers",
+        "optimizer_states",
+        "pytorch-lightning_version",
+        "state_dict"
+      ],
+      "epoch": 19,
+      "global_step": 1080,
+      "pytorch_lightning_version": "2.4.0"
+    },
+    "saved_args": {
+      "accum_iter": 8,
+      "attn_dropout": 0.3,
+      "batch_size": 1,
+      "beta_smoothl1": 0.1,
+      "ckpt": "/home/ubuntu/DFpred_logs/dinov2_[2,5,8,11]_masked_LrBase8e5_BS8x8_Layers12_Width1152H8_EPS800_SmoothL1_embdim10_alldropout0p1_RandHFlipCrop_SimpleMasking_SepAttn_fp16_nearest_seqlen5_pca1152_fullmask/lightning_logs/version_0/checkpoints/epoch=669-step=30820_interp.ckpt",
+      "crop_feats": false,
+      "d_layers": [
+        2,
+        5,
+        8,
+        11
+      ],
+      "data_path": "/home/ubuntu/cityscapes/leftImg8bit_sequence",
+      "device": "device(type='cuda')",
+      "dinov2_variant": "vitb14_reg",
+      "down_up_sample": false,
+      "dpt_out_channels": [
+        128,
+        256,
+        1024,
+        1024
+      ],
+      "dropout": 0.1,
+      "dst_path": "/home/ubuntu/DFpred_logs/dinov2_[2,5,8,11]_masked_LrBase8e5_BS8x8_Layers12_Width1152H8_EPS800_SmoothL1_embdim10_alldropout0p1_RandHFlipCrop_SimpleMasking_SepAttn_fp16_nearest_seqlen5_pca1152_fullmask_highresadapt20eps_baselr1e-5",
+      "effective_batch_size": 56,
+      "eval_ckpt_only": false,
+      "eval_freq": 10,
+      "eval_last": false,
+      "eval_midterm": false,
+      "eval_modality": null,
+      "eval_mode": true,
+      "eval_mode_during_training": true,
+      "evaluate": true,
+      "evaluate_baseline": false,
+      "feature_extractor": "dino",
+      "gclip": 1.0,
+      "gpu": "device(type='cuda')",
+      "head_ckpt": null,
+      "heads": 8,
+      "hidden_dim": 1152,
+      "img_size": [
+        448,
+        896
+      ],
+      "layers": 12,
+      "loss_type": "SmoothL1",
+      "lr": 7.000000000000001e-05,
+      "lr_base": 1e-05,
+      "masking": "simple_replace",
+      "max_epochs": 20,
+      "max_steps": 1060,
+      "n_cond_frames": 0,
+      "nfeats": 256,
+      "no_timestep_augm": false,
+      "normalize": false,
+      "num_classes": 19,
+      "num_gpus": 7,
+      "num_workers": 16,
+      "num_workers_val": 4,
+      "optimizer": "adam",
+      "output_activation": "none",
+      "pca_ckpt": "/home/ubuntu/DinoFeatPred/pca/pca_448_l[2_5_8_11]_1152.pth",
+      "precision": "16-mixed",
+      "random_crop": true,
+      "random_horizontal_flip": true,
+      "random_time_flip": false,
+      "rank": 0,
+      "scheduler": "cosine",
+      "seed": 123,
+      "seperable_attention": true,
+      "seperable_window_size": 1,
+      "sequence_length": 5,
+      "single_step_sample_train": true,
+      "standardize": false,
+      "step": 2,
+      "timestep_augm": null,
+      "train_head": false,
+      "train_mask_frames": 1,
+      "train_mask_mode": "full_mask",
+      "use_bn": false,
+      "use_cls": false,
+      "use_fc_bias": true,
+      "use_first_last": false,
+      "use_train_to_val": false,
+      "use_val_to_train": false,
+      "vis_attn": false,
+      "warmup_p": 0.0,
+      "warmup_steps": 0,
+      "weight_decay": 0,
+      "world_size": 7
+    },
+    "state_dict_groups": {
+      "pca_mean": 1,
+      "pca_components": 1,
+      "mean": 1,
+      "std": 1,
+      "replace_vector": 1,
+      "dino_v2": 176,
+      "maskvit": 221,
+      "embed": 2
+    },
+    "params_per_module": {
+      "dino_v2": 86583552,
+      "maskvit": 256433664,
+      "embed": 1328256,
+      "activation": 0,
+      "mean_metric": 0,
+      "random_crop": 0
+    },
+    "params_world_model": 257761920,
+    "load_info": {
+      "args_diff": {
+        "sliding_window_inference": [
+          "'<missing>'",
+          "False"
+        ],
+        "high_res_adapt": [
+          "'<missing>'",
+          "False"
+        ],
+        "eval_mode": [
+          "True",
+          "False"
+        ],
+        "evaluate": [
+          "True",
+          "False"
+        ],
+        "pca_ckpt": [
+          "'/home/ubuntu/DinoFeatPred/pca/pca_448_l[2_5_8_11]_1152.pth'",
+          "'/mnt/beegfs/home/leonardo.ulloa/irwm/checkpoints/dino_foresight/9174a31e/dinov2_pca_448_l[2_5_8_11]_1152.pth'"
+        ]
+      },
+      "missing_keys": [],
+      "unexpected_keys": [],
+      "hub_version": "dinof_release"
+    }
+  },
+  "section_seconds": {
+    "artefacts": 53.05,
+    "weights": 0.94,
+    "recipe": 2.89,
+    "rollout": 18.25
+  },
+  "weights": {
+    "dinov2_ckpt_vs_official": {
+      "n_ckpt": 176,
+      "n_official": 176,
+      "n_common": 176,
+      "only_in_ckpt": [],
+      "only_in_official": [],
+      "max_abs_diff": 0.0
+    },
+    "pca_ckpt_vs_export": {
+      "pca_mean": 0.0,
+      "components": 0.0,
+      "mean": 0.0,
+      "std": 0.0,
+      "dtypes_in_ckpt": {
+        "pca_mean": "torch.float32",
+        "pca_components": "torch.float32",
+        "mean": "torch.float32",
+        "std": "torch.float32"
+      }
+    },
+    "pcabasis_vs_reference": {
+      "transform_max_abs_diff": 0.0,
+      "inverse_max_abs_diff": 0.0
+    },
+    "pcabasis_sha256": "16e897a6f09223192d26684418a157acbe08c9a74c56569707d63b7f15766f2e"
+  },
+  "recipe": {
+    "tokens_total_per_image": 2053,
+    "num_register_tokens": 4,
+    "patch_tokens": 2048,
+    "feature_dim": 3072,
+    "embed_dim_per_layer": 768,
+    "intermediate_equals_hooks_plus_norm": 0.0,
+    "intermediate_norm_false_equals_raw_hooks": 0.0,
+    "effect_of_final_norm_max_abs": 92.8167724609375,
+    "zscore": {
+      "mean_abs_of_dim_means": 0.10874416679143906,
+      "mean_of_dim_stds": 1.003503441810608
+    },
+    "pca_explained_variance_demo": 0.9045078754425049,
+    "pca_relative_recon_error_raw": 0.030916504561901093,
+    "hub_version_used": "dinof_release"
+  }
+}
