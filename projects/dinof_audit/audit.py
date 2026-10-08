@@ -177,7 +177,7 @@ def section_weights(ctx: Ctx) -> dict:
     z = torch.randn(1, 1, 32, 64, 1152, generator=g).to(ctx.device)
     basis = basis.to(ctx.device)
     with torch.no_grad():
-        equiv = {"transform_max_abs_diff": maxdiff(basis.transform(x), model.pca_transform(x)),
+        equiv = {"transform_max_abs_diff": maxdiff(basis.transform(x), model.pca_trantxsform(x)),
                  "inverse_max_abs_diff": maxdiff(basis.inverse(z), model.pca_inverse_transform(z))}
     return {"dinov2_ckpt_vs_official": dino, "pca_ckpt_vs_export": pca, "pcabasis_vs_reference": equiv,
             "pcabasis_sha256": basis.sha256}

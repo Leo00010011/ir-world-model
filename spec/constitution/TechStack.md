@@ -71,11 +71,11 @@ Rules:
 ## 3. Models and fixed hyperparameters
 
 ### 3.1 Encoder: DINOv2 (frozen)
-Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed or corrected by the F1 audit.
-- Backbone **DINOv2-Reg ViT-B/14** (`vitb14_reg`), frozen, `eval()`, no grad. Weights are loaded **the same way DINO-Foresight loads them**, so the features the world model sees match its training distribution exactly. The weight path comes from an env var (§6).
+Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed by the F1 audit (`spec/2026-10-02-dino-foresight-audit/audit.md`).
+- Backbone **DINOv2-Reg ViT-B/14** (`vitb14_reg`), frozen, `eval()`, no grad. Weights are the official `dinov2_vitb14_reg4_pretrain.pth`, bit-identical to the copy inside the DINO-Foresight checkpoint *(F1)*. The model is built from the DINOv2 hub code **pinned to `dinof_release` (`85a24602`)**, because the reference loads the unpinned `main` at runtime *(F1)*. Paths come from `irwm.worldmodel.assets` and env vars (§6).
 - Input **448×896** (32×64 patch tokens), the size of the high-res checkpoint. ImageNet mean/std normalisation. How FLIR's 5:4 frames are mapped to the model input (stretch, crop, native grid or two windows) is **still open**. It is decided at training time, before F5, from the F1 probe plus a FLIR check (Roadmap R5). Until then the encoder (F4) must take the policy as a config parameter, not hard-code it. Below, the token grid is written `H'×W'` (default 32×64).
-- **Features = channel concatenation of the patch-token outputs of blocks 3, 6, 9, 12** (1-indexed; `d_layers 2,5,8,11` in the reference code) → **3072-d**. No CLS or register tokens. Whether the final norm is applied is decided in *(F1)*.
-- **PCA:** DINO-Foresight's released PCA (`dinov2_pca_448_l[2_5_8_11]_1152.pth`, fit on Cityscapes train) reduces 3072 → **1152-d**. This is the space the world model reads and writes. The PCA is part of the frozen encoder and is never re-fit outside Phase 4.
+- **Features = channel concatenation of the patch-token outputs of blocks 3, 6, 9, 12** (1-indexed; `d_layers 2,5,8,11` in the reference code) → **3072-d**. The CLS token and the 4 register tokens are dropped (2053 → 2048 tokens). **The final LayerNorm is applied to every one of the four blocks** (DINOv2 `get_intermediate_layers` default `norm=True`) *(F1)*.
+- **PCA:** DINO-Foresight's released PCA (`dinov2_pca_448_l[2_5_8_11]_1152.pth`, fit on Cityscapes train) reduces 3072 → **1152-d**. Applied as: standardise each dim by the stored `mean`/`std`, subtract `pca_mean`, then project on `components`. **No whitening** *(F1)*. Implemented in pure torch by `irwm.features.pca.PCABasis` (equal to the reference, |Δ| = 0). This is the space the world model reads and writes. The PCA is part of the frozen encoder and is never re-fit outside Phase 4.
 - **Thermal frames** are single-channel and get **replicated to 3 channels** before normalisation. This choice is written down because it affects every IR result.
 
 ### 3.2 Detector: DINO-DETR head (ported)
@@ -88,9 +88,11 @@ Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed or corrected by
 ### 3.3 World model: DINO-Foresight (frozen, zero-shot)
 - Official code from `Sta8is/DINO-Foresight` (MIT), as a submodule. The checkpoint is `dinof_highres.ckpt` from Hugging Face `Sta8is/DINO-Foresight`. **Used zero-shot: never retrained in Phases 0–3.**
 - A masked feature transformer (12 layers, hidden 1152, 8 heads, separable space–time attention) that predicts **1 future frame from 4 context frames** in PCA space. It is **deterministic** (SmoothL1 regression).
-- Temporal protocol copied from the paper: one step ≈ **0.176 s** on Cityscapes (17 Hz, stride 3). For FLIR at 30 FPS we use **stride 5 (0.167 s)** *(F1/F3)*. Longer horizons come from an **autoregressive rollout**: append the prediction and drop the oldest context frame *(F1)*. Short-term = 1 step, mid-term = 3 steps; we evaluate up to 6 steps.
+- Temporal protocol: training sampled a random step of 2–4 frames at 17 Hz (0.118–0.235 s); evaluation uses a fixed step of 3 (≈ **0.176 s**) *(F1)*. For FLIR at 30 FPS we use **stride 5 (0.167 s)**, inside the training range *(F1; F3 checks the FPS)*. Longer horizons come from an **autoregressive rollout in PCA space**: the prediction overwrites the masked last slot, then the window shifts by one *(F1)*. Short-term = 1 step, mid-term = 3 steps; we evaluate up to 6 steps.
+- Inference precision: **fp16 autocast**, as in the reference `16-mixed` (SmoothL1 changes by 0.01 %). Equivalence tests run in fp32, where the reference is reproduced exactly *(F1)*.
+- Positional embeddings are factorised tables (time, height, width). A token grid other than 32×64 is supported by loading with `high_res_adapt=True`, which bilinearly interpolates the height/width tables *(F1)*.
 - The adapter exposes `rollout(context_feats[4, H', W', 1152], n_steps) -> [n_steps, H', W', 1152]`.
-- **Licences:** DINO-Foresight code is MIT and DINOv2 is Apache-2.0. The licence of the released weights is checked in F1. Research use only; do not redistribute weights.
+- **Licences:** DINO-Foresight code is MIT and DINOv2 is Apache-2.0. The released weights are MIT (HF model card) *(F1)*. Research use only; do not redistribute weights.
 
 ### 3.4 Canonical class mapping
 The data-module spec defines one mapping in `irwm/data/classes.py`, from FLIR's 15 categories to (a) the 3 coarse classes {vehicle, pedestrian, cyclist} and (b) the full FLIR set. Every project imports it; nobody redefines it.
@@ -170,7 +172,7 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | DINO-DETR head | `lib/irwm/detection/` | F7 | ☐ |
 | COCO evaluator (3-class AP/AP50, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
 | DINO-Foresight adapter + prediction cache | `lib/irwm/worldmodel/` | F10–F11 | ☐ |
-| Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ◐ built; cluster download pending |
-| `PCABasis`: DINO-Foresight PCA in pure torch (`transform`/`inverse`, 3072↔1152), loaded from the exported `pca_1152.pt` | `lib/irwm/features/pca.py` | F1 | ◐ built; equals the reference (\|Δ\| = 0, local check) |
-| Reference loader: unmodified `Dino_f` with the checkpoint's args, DINOv2 routed to the pinned local copy, `train_py_defaults` for missing args, demo-frame loader | `lib/irwm/worldmodel/reference.py` | F1 | ◐ built |
-| Audit project (`download.py`, `pca_export.py`, `audit.py`) | `projects/dinof_audit/` | F1 | ◐ awaiting ctcomp3 run |
+| Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ✓ (manifests verified on ctcomp3) |
+| `PCABasis`: DINO-Foresight PCA in pure torch (`transform`/`inverse`, 3072↔1152), loaded from the exported `pca_1152.pt` | `lib/irwm/features/pca.py` | F1 | ✓ (equals the reference, \|Δ\| = 0, ctcomp3) |
+| Reference loader: unmodified `Dino_f` with the checkpoint's args, DINOv2 routed to the pinned local copy, `train_py_defaults` for missing args, demo-frame loader | `lib/irwm/worldmodel/reference.py` | F1 | ✓ |
+| Audit project (`download.py`, `pca_export.py`, `audit.py`) | `projects/dinof_audit/` | F1 | ✓ (`hub`, `segm` sections implemented but not run) |
