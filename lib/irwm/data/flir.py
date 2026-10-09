@@ -33,7 +33,7 @@ from irwm.utils.paths import data_root
 Modality = Literal["rgb", "thermal"]
 Split = Literal["train", "val", "test"]
 
-# Folder name exactly as on disk, misspelling included. Also in conf/flir/default.yaml.
+# Folder name exactly as on disk. Also in conf/flir/default.yaml.
 FLIR_DIRNAME = "teledyne_flir_adas_v2"
 _DATASET_DIR = "FLIR_ADAS_v2"
 _MAP_FILE = "rgb_to_thermal_vid_map.json"

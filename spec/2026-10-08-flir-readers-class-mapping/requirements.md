@@ -34,7 +34,7 @@ Out of scope:
 ## Functional Requirements
 
 **FR1 — Dataset root (`irwm/data/flir.py`, `irwm/conf/flir/default.yaml`).**
-- `FLIR_DIRNAME = "teledyne_flir_adas_v2"`: the folder name exactly as it is on disk, misspelling included.
+- `FLIR_DIRNAME = "teledyne_flir_adas_v2"`: the folder name exactly as it is on disk (renamed by the user from the misspelt `teledyine_…` on 2026-10-09).
 - `flir_root() -> Path` returns `irwm.utils.paths.data_root() / FLIR_DIRNAME`.
 - The layout is the zip's own:
   - split `<split_dir>` lives at `<root>/FLIR_ADAS_v2/<split_dir>/`;

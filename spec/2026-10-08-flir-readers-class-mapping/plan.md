@@ -17,7 +17,7 @@
   - Thermal is unchanged by it.
   - Native buckets are still reported in the stats for reference.
   - Bucketing in model-input pixels was rejected, because it depends on R5, which is still open.
-- **The data is read from the as-downloaded layout under one configurable root** (user decision, 2026-10-08). `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/` contains `FLIR_ADAS_v2/<split_dir>/`, and the map file sits next to `FLIR_ADAS_v2/`, not inside it. The folder name is kept exactly as on disk, misspelling included.
+- **The data is read from the as-downloaded layout under one configurable root** (user decision, 2026-10-08). `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/` contains `FLIR_ADAS_v2/<split_dir>/`, and the map file sits next to `FLIR_ADAS_v2/`, not inside it. The folder name is the one on disk. *(Amended 2026-10-09: the user renamed the as-downloaded `teledyine_…` folder to the correct spelling `teledyne_flir_adas_v2`; see Amendments.)*
   - This **deviates from TechStack §4.1** (`$IRWM_DATA_ROOT/flir_adas_v2/`) and from the comment in `.env.example` (line 3). Both must be corrected (flagged).
   - The name exists in exactly two places: `FLIR_DIRNAME` and `conf/flir/default.yaml`. A test keeps them equal.
   - **Reminder (TechStack §6):** no absolute paths in code or configs. `/home/leonardo.ulloa/...` goes only in the git-ignored `.env`.
@@ -168,3 +168,6 @@ Covers: FR11.
 7. Step 7 — Tests → `uv run pytest tests/test_flir_data.py`, then the full suite `uv run pytest`, which must still pass all 36 F0 tests and the F1 tests
 8. Step 8 — Run stats and real-data tests on ctdesk236 (user)
 9. Step 9 — Write up results
+
+## Amendments
+- **2026-10-09 — dataset folder renamed to `teledyne_flir_adas_v2`** (user decision). The as-downloaded folder was misspelt `teledyine_flir_adas_v2`; the user renamed it on ctdesk236 and changed `FLIR_DIRNAME`, `conf/flir/default.yaml`, `.env.example`, the tests and the spec text to match (commit `a4d65ef`). FR1, Step 1, validation Group 1 and the Read-only data item now use the new name. The "two places only" rule and its test are unchanged. TechStack §4.1 still needs correcting to `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/FLIR_ADAS_v2/<split_dir>/`.
