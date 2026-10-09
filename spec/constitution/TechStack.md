@@ -15,7 +15,7 @@ This file lists every technology choice, where code lives, and the rules all fea
 | HPO | **Optuna** through `hydra-optuna-sweeper` | Only when a spec asks for it |
 | Cluster | **SLURM** through `hydra-submitit-launcher` plus plain `sbatch` templates in `slurm/` | See §5 |
 | Feature storage | **HDF5** (`h5py`) | See §4 |
-| Detection metrics | `pycocotools` (COCO eval), with our own wrapper for the 3-class mapping, per-horizon breakdown and bootstrap CIs | |
+| Detection metrics | `pycocotools` (COCO eval), with our own wrapper for the 6-class label space with ignore regions (F2), per-horizon breakdown and bootstrap CIs | |
 | Testing | `pytest` | Run locally with `py -m pytest tests/...` (Windows) or `uv run pytest` |
 | Local OS | Windows 11 (development) | Code must be path-agnostic (`pathlib`) and must not assume POSIX-only tools |
 | Cluster OS | Linux + SLURM | |
@@ -45,6 +45,7 @@ ir-world-model/
 │       └── utils/              # paths/env resolution, seeding, logging, SLURM helpers
 ├── projects/                   # one folder per research project; entry points + configs only
 │   ├── smoke/                  # permanent env/cluster health check (toy Lightning run)
+│   ├── data_stats/             # F2: FLIR dataset statistics / class-imbalance report
 │   ├── dinof_audit/            # F1: download/pin DINO-Foresight artefacts, audit the reference code
 │   ├── feature_extraction/     # build the DINOv2 caches
 │   │   ├── conf/               # Hydra configs
@@ -64,6 +65,7 @@ Rules:
 - A project folder may later get its own `spec/`-style constitution once it grows large enough.
 - **Hydra wiring:** shared config groups live in `lib/irwm/conf/`. A project's primary config uses `defaults: [irwm_base, _self_]` and `hydra.searchpath: ["pkg://irwm.conf"]`, and sets `project: <folder name>`. Every entry point calls `irwm.utils.paths.load_env()` at import time, before `@hydra.main`. `run_name` comes from the cluster group (a timestamp locally, `slurm-<job id>` on SLURM, which is stable across requeues). Checkpoints go to `${paths.ckpt_root}/<project>/${run_name}/`, with the trainer's `default_root_dir` set to that dir, and training resumes with `resume_ckpt_path()`.
 - **Reference-only deps:** `pytorch_lightning`, `timm`, `einops` and `scikit-learn==1.5.2` are needed only to run DINO-Foresight's own code. They live in the optional extra `irwm[reference]` (used by `projects/dinof_audit`) and are imported lazily, so `lib/irwm` imports without them. A test enforces that there are no module-level imports.
+- **Notebooks** (`notebooks/`) need the root dependency group `notebook` (`ipykernel`, `matplotlib`): `uv sync --group notebook`. A plain `uv sync` removes it again. Notebooks read results from `$IRWM_OUTPUT_ROOT` through `irwm.utils.paths`, never from hard-coded paths.
 - **Dependencies:** deps shared by all projects (torch, lightning, hydra, wandb, …) are declared in `lib/pyproject.toml`. Each feature adds its own deps there, or to its project's `pyproject.toml` if only that project needs them.
 - `lib/irwm` must never import from `projects/`.
 - Third-party code (DINO-Foresight) is used only through an adapter in `irwm/worldmodel/`. We do not patch the submodule. If a change is unavoidable, it is kept as a patch file with its reason recorded in the spec.
@@ -94,18 +96,31 @@ Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed by the F1 audit
 - The adapter exposes `rollout(context_feats[4, H', W', 1152], n_steps) -> [n_steps, H', W', 1152]`.
 - **Licences:** DINO-Foresight code is MIT and DINOv2 is Apache-2.0. The released weights are MIT (HF model card) *(F1)*. Research use only; do not redistribute weights.
 
-### 3.4 Canonical class mapping
-The data-module spec defines one mapping in `irwm/data/classes.py`, from FLIR's 15 categories to (a) the 3 coarse classes {vehicle, pedestrian, cyclist} and (b) the full FLIR set. Every project imports it; nobody redefines it.
+### 3.4 Canonical label space *(F2)*
+One label space in `irwm/data/classes.py`; every project imports it and nobody redefines it.
+- **6 classes:** `CLASS_NAMES = ("person", "bike", "car", "motor", "light", "sign")`, labels `0..5` by ascending FLIR category id (`CATEGORY_ID_TO_LABEL = {1: 0, 2: 1, 3: 2, 4: 3, 10: 4, 12: 5}`). FLIR ids and names are always read from `coco.json` (the README's id list is wrong for `scooter`).
+- **Ignore regions:** `label_of(id) is None` for every other FLIR class. They are not targets and not background. In COCO GT (`FlirSplit.to_coco_gt`) each ignore box is emitted once per kept category with `iscrowd: 1`, because `COCOeval` matches crowd regions only within a category.
+- **No coarse mapping** (vehicle/pedestrian/cyclist) exists anywhere.
+- **Size buckets:** `normalised_area = w·h·(640·512)/(W·H)`, then COCO thresholds 32² / 96² (`size_bucket`). Thermal (640×512) is unchanged; RGB frames are larger, so native buckets would compare different objects.
 
 ## 4. Data and cache layout
 
 ### 4.1 Raw data
-FLIR ADAS v2 as downloaded (COCO JSON per split, `rgb_to_thermal_vid_map.json` for the video sets), under `$IRWM_DATA_ROOT/flir_adas_v2/`. It is read-only; code never writes there.
+FLIR ADAS v2 as downloaded, under `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/` (*F2*; the zip's misspelt folder name was corrected by the user). It is read-only; code never writes there. Only `irwm.data.flir` (`FLIR_DIRNAME`) and `conf/flir/default.yaml` (`flir.root`, in `irwm_base`) name the folder.
+```
+teledyne_flir_adas_v2/
+├── rgb_to_thermal_vid_map.json          # RGB test basename → thermal test basename (3749 entries)
+└── FLIR_ADAS_v2/<split_dir>/            # images_{rgb,thermal}_{train,val}, video_{rgb,thermal}_test
+    ├── coco.json                        # the annotation source (index.json only for test videos[].tags)
+    ├── index.json
+    └── data/video-<video_id>-frame-<6 digits>-<uid>.jpg
+```
+`image_id` is unique only within one (modality, split); lookups go through `FlirSplit`. The 16-bit `analyticsData` TIFFs are not used.
 
 ### 4.2 Feature cache (HDF5)
 Location: `$IRWM_CACHE_ROOT/features/<encoder_tag>/<modality>/<split>.h5`, where `encoder_tag = dinov2_vitb14reg_448x896_l3-6-9-12_pca1152` (the resolution part changes if F1 picks another policy).
 
-Size check: 32·64·1152 fp16 ≈ 4.7 MB per frame. With ~26k annotated frames plus ~7.5k video frames, the total is about **160 GB**. Full 3072-d features would be about 420 GB, so they are **not** cached by default. They are encoded on the fly for the PCA-loss analysis on a subset (Roadmap R7).
+Size check: 32·64·1152 fp16 ≈ 4.7 MB per frame. With 30,787 frames (23,289 annotated image frames plus 7,498 video frames, F2), the total is about **145 GB**. Full 3072-d features would be about 390 GB, so they are **not** cached by default. They are encoded on the fly for the PCA-loss analysis on a subset (Roadmap R7).
 
 Minimal layout (the feature spec fixes the details):
 ```
@@ -141,7 +156,7 @@ Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`. It s
 | `WANDB_PROJECT`, `WANDB_ENTITY`, `WANDB_MODE` | W&B; `WANDB_MODE=offline` is supported for compute nodes without internet |
 | `WANDB_API_KEY_FILE` | File holding the W&B key (default `~/.wandb_api_key`); `slurm/env.sh` exports `WANDB_API_KEY` from it when unset |
 
-Hydra configs read these through `${oc.env:IRWM_CACHE_ROOT}`. A local `.env` (git-ignored) sets them on the laptop.
+Hydra configs read these through `${oc.env:IRWM_CACHE_ROOT}`. A local `.env` (git-ignored) sets them on the laptop. **Put `.env` comments on their own line, never after a value**: VS Code's Python extension injects `.env` into Jupyter kernels with a parser that keeps inline comments as part of the value, and `load_env()` does not override variables that are already set.
 
 ## 7. Coding constraints
 - Type hints on public functions. Document shapes as `[B, C, H, W]` in docstrings.
@@ -164,13 +179,16 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Cluster scripts: `setup_env.sh` (per-cluster env bootstrap), `submit.sh` (site config → sbatch), `job.sbatch`, `env.sh` (.env + W&B key file) | `slurm/` | F0 | ✓ |
 | Per-cluster site configs (template `example_site.yaml`; sites: `ctcomp3`) | `lib/irwm/conf/cluster/<site>.yaml` | F0 | ✓ |
 | DINO-Foresight submodule @ `d98f765` | `third_party/DINO-Foresight` | F0 | ✓ |
-| FLIR ADAS v2 readers (images, video, COCO labels) | `lib/irwm/data/` | F2 | ☐ |
-| Canonical class mapping | `lib/irwm/data/classes.py` | F2 | ☐ |
+| FLIR ADAS v2 readers: `FlirSplit`, `FlirRecord`, `FlirImageDataset`, `to_coco_gt` (ignore regions as crowd GT), `load_rgb_thermal_map`, `video_tags` | `lib/irwm/data/flir.py` | F2 | ✓ |
+| Canonical label space (6 classes, ignore rule, 640×512-normalised size buckets) | `lib/irwm/data/classes.py` | F2 | ✓ |
+| Shared Hydra group `flir` (`flir.root`) | `lib/irwm/conf/flir/default.yaml` | F2 | ✓ |
+| Dataset statistics (`compute_stats`, `render_markdown`, `COCO80_NAME`) + entry point | `lib/irwm/data/stats.py`, `projects/data_stats/` | F2 | ✓ (ctdesk236) |
+| Stats notebook | `notebooks/flir_stats.ipynb` | F2 | ✓ |
 | Video clip builder (30 FPS → stride 5, 4 ctx + 6 future) | `lib/irwm/data/clips.py` | F3 | ☐ |
 | DINOv2 encoder wrapper + PCA | `lib/irwm/features/encoder.py` | F4 | ☐ |
 | HDF5 feature cache | `lib/irwm/features/cache.py` | F5 | ☐ |
 | DINO-DETR head | `lib/irwm/detection/` | F7 | ☐ |
-| COCO evaluator (3-class AP/AP50, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
+| COCO evaluator (6-class AP/AP50 with ignore regions, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
 | DINO-Foresight adapter + prediction cache | `lib/irwm/worldmodel/` | F10–F11 | ☐ |
 | Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ✓ (manifests verified on ctcomp3) |
 | `PCABasis`: DINO-Foresight PCA in pure torch (`transform`/`inverse`, 3072↔1152), loaded from the exported `pca_1152.pt` | `lib/irwm/features/pca.py` | F1 | ✓ (equals the reference, \|Δ\| = 0, ctcomp3) |

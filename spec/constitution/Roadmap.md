@@ -59,12 +59,19 @@ Read the released code and check it against the paper before building anything o
 
 ## Phase 1: Data and features
 
-### F2 · FLIR ADAS v2 readers and class mapping ☐
-Read-only readers for the `train`/`val` image splits and the `video_*_test` split for both modalities, returning image + COCO annotations. Includes the canonical class mapping (`irwm/data/classes.py`: 15 FLIR classes → 3 coarse classes and the full set) and a dataset-statistics script giving counts per split, modality and class, the size distribution (S/M/L), and image sizes.
+### F2 · FLIR ADAS v2 readers and class mapping ✓ DONE (2026-10-09)
+> Spec and stats note: `spec/2026-10-08-flir-readers-class-mapping/` (`stats.md`), visual summary in `notebooks/flir_stats.ipynb`. Stats and real-data tests run on ctdesk236 (CPU) at commit `a4d65ef`; 96 default tests + 8 `data` tests pass.
+> - **Label space:** 6 FLIR classes (person, bike, car, motor, light, sign), labels `0..5` by ascending FLIR id, no coarse mapping. All 10 other classes with boxes are ignore regions; `FlirSplit.to_coco_gt` emits each ignore box once per kept class with `iscrowd: 1`. Size buckets use areas normalised to 640×512.
+> - **API:** `FlirSplit` (metadata only, per (modality, split); `image_id` is unique only within a split), `FlirImageDataset` (native-resolution `uint8`, thermal `[H, W]` mode `L`, RGB `[H, W, 3]`), `load_rgb_thermal_map`, `video_tags`. Data root `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/` (folder renamed by the user from the misspelt download name).
+> - **Data facts:** 30,787 frames (RGB 10318 / 1085 / 3749, thermal 10742 / 1144 / 3749), all JPEGs match `coco.json` size and mode, 1 orphan RGB train JPEG. Kept test boxes: RGB 81,221, thermal 58,685. Test = 8 time-synced sequences per modality (208–1033 frames), **no per-frame timestamps**; frame-index gaps of 271 + 178 in one sequence and 1253 in another. Thermal frames are all 640×512; RGB test frames are 1224×1024 (2151) or 1024×768 (1598).
+> - **Findings that affect later features:** ~86–89 % of kept test boxes are small (R3); thermal test has far fewer sign/light/bike boxes than RGB on the same frames (R10); bike has only 113 thermal test boxes (R2).
+> - **Deferred:** copying the dataset to ctcomp3 (needed before F5).
+
+Read-only readers for the `train`/`val` image splits and the `video_*_test` split for both modalities, returning image + COCO annotations. Includes the canonical class mapping (`irwm/data/classes.py`; planned as 15 FLIR classes → 3 coarse classes, decided as 6 FLIR classes + ignore regions, see the note above) and a dataset-statistics script giving counts per split, modality and class, the size distribution (S/M/L), and image sizes.
 **Depends on:** F0, and the user having downloaded the dataset to `$IRWM_DATA_ROOT`.
 
 ### F3 · Video clip index ☐
-Parse the video test split into sequences and recover frame order and timestamps. Subsample with the **frame stride chosen to match DINO-Foresight's step**: **stride 5 at 30 FPS (0.167 s)**, confirmed by F1 (evaluation step 0.176 s, training range 0.118–0.235 s). Verify from the timestamps that the video really is 30 FPS. Build every valid clip of **4 context + 6 future steps** (stride between clips is configurable) per modality. The index is stored as a small file (JSON/Parquet). The feature also reports how many clips and sequences each modality has, and checks the RGB↔thermal map for consistency.
+Parse the video test split into sequences and recover frame order from `FlirRecord.video_id`/`frame_index` (F2). Subsample with the **frame stride chosen to match DINO-Foresight's step**: **stride 5 at 30 FPS (0.167 s)**, confirmed by F1 (evaluation step 0.176 s, training range 0.118–0.235 s). The test split has **no per-frame timestamps** (F2), so 30 FPS cannot be verified from the data: take it from the README and record that. **Clips must not span a `frame_index` gap** (F2 found gaps of 271 + 178 in one sequence per modality and 1253 in another). Build every valid clip of **4 context + 6 future steps** (stride between clips is configurable) per modality. The index is stored as a small file (JSON/Parquet). The feature also reports how many clips and sequences each modality has, and checks the RGB↔thermal map for consistency.
 **Done when:** the clip index exists for both modalities and the clip counts are recorded in the spec.
 **Depends on:** F2 (and F1 for the stride).
 
@@ -73,7 +80,7 @@ Parse the video test split into sequences and recover frame order and timestamps
 **Depends on:** F0, F1.
 
 ### F5 · Feature cache builder ☐
-A SLURM-friendly, resumable job that encodes every frame (train, val, video test; RGB and IR) into the HDF5 layout in TechStack §4.2. It includes a reader API (lookup by `image_id`, a Lightning-compatible dataset) and a storage/throughput report. At 32×64 tokens the PCA cache is about 4.7 MB per frame, so about **160 GB** in total (see R7).
+A SLURM-friendly, resumable job that encodes every frame (train, val, video test; RGB and IR) into the HDF5 layout in TechStack §4.2. It includes a reader API (lookup by `image_id`, a Lightning-compatible dataset) and a storage/throughput report. At 32×64 tokens the PCA cache is about 4.7 MB per frame, so about **145 GB** for the 30,787 frames counted in F2 (see R7). Frames come from `irwm.data.flir.FlirImageDataset`. The dataset must first be copied to ctcomp3 (deferred from F2).
 **Depends on:** F2, F4.
 
 ---
@@ -82,7 +89,7 @@ A SLURM-friendly, resumable job that encodes every frame (train, val, video test
 
 ### F6 · Detection evaluator ☐
 `irwm.eval`, built as pure functions with tests on synthetic boxes:
-- COCO-eval wrapper (AP, AP50, APS/M/L) over the 3 coarse classes and over all FLIR classes
+- COCO-eval wrapper (AP, AP50, APS/M/L, per-class AP) over the 6 F2 classes, on the GT from `FlirSplit.to_coco_gt` (ignore regions as crowd GT, APS/M/L on 640×512-normalised areas). Adds `pycocotools`.
 - per-horizon breakdown
 - bootstrap CIs over clips (R2)
 
@@ -162,11 +169,12 @@ Generalisation check: apply the best technique to RGB and, if feasible, to anoth
 | # | Item | Resolved in |
 |---|---|---|
 | R1 | ~~FlowWM checkpoint not public~~. **Closed (F1):** DINO-Foresight checkpoints load cleanly, and the weights are MIT. | F1 ✓ |
-| R2 | The FLIR video test split is small (~3.7k frames per modality, a few sequences), so there may be few clips and wide confidence intervals. Use bootstrap CIs over clips. | F3, F6 |
-| R3 | FLIR has few *large* objects. The primary metric is now AP/AP50 over all sizes, but small objects on a 14-px patch grid may give low absolute AP. | F2 stats, F9 |
+| R2 | The FLIR video test split is small (3749 frames per modality in 8 sequences, F2), so there may be few clips and wide confidence intervals. Use bootstrap CIs over clips. Bike is the weakest class: 113 thermal / 446 RGB test boxes. | F3, F6 |
+| R3 | FLIR has few *large* objects. The primary metric is now AP/AP50 over all sizes, but small objects on a 14-px patch grid may give low absolute AP. **F2:** 89 % (RGB) and 86 % (thermal) of kept test boxes are S (< 32² on the 640×512-normalised area); light and sign are ≥ 93 % S in every split. | F2 stats, F9 |
 | R4 | 1→3 channel replication for thermal is a design choice that may itself hurt DINOv2 IR features. | F4 / F9 |
 | R5 | **Aspect ratio. OPEN: decide at training time, before F5** (it fixes the cache grid and both detectors, so changing it later means re-encoding everything and retraining). DINO-Foresight was trained at 448×896 (2:1 → 32×64 tokens of 14 px). FLIR thermal is 640×512 (5:4) and RGB varies. Options, with px of the original FLIR frame per token: **(a)** stretch to 448×896: full frame, trained size, ~1.6× distortion, 10×16 px/token. **(b)** crop the central 2:1 band, then resize to 448×896: no distortion, trained size, but drops 96 rows top and 96 bottom (37.5 % of the frame; boxes lost or truncated there), 10×10 px/token. **(c)** native 448×560: full frame, no distortion, but an untrained 32×40 grid (37.5 % fewer tokens, positional embeddings interpolated 64→40) and 16×16 px/token. **(d)** two overlapping 2:1 windows (top and bottom) merged: full frame, no distortion, trained grid, but 2× cache and compute (reference `sliding_window_inference` code exists). Not tested. **F1 probe** (one Cityscapes demo clip center-cropped to 5:4; 1-step; ratio = model SmoothL1 ÷ copy-last SmoothL1 in PCA space, lower is better): uncropped 2:1 reference 0.607; (a) 0.662; (b) 0.551; (c) 0.648. **Reading:** every policy beats copy-last by 34–45 %, so neither the stretch nor the 32×40 grid breaks the model. (a) and (c) are tied within noise (one clip). (b)'s win is likely because the central band is easier: it even beats the uncropped reference, and it pays with the lost field of view. The metric measures forecasting only, not small-object detection (R3). **Before deciding:** repeat the probe on a few FLIR RGB/IR clips (no labels needed), and weigh field of view and px/token against detection needs. Provisional preference: (a). | before F5 |
 | R6 | Phase 4 needs unlabeled IR video that is disjoint from test. | F14 |
-| R7 | **PCA basis fit on Cityscapes RGB.** It may truncate IR features more than RGB, which would confound H1 and H2. Caching full 3072-d features would cost about 420 GB, against about 160 GB for the PCA cache. **Decided (F1):** cache PCA features only, and measure the PCA loss per modality on a subset with full features encoded on the fly. In-domain baseline: 3.1 % relative reconstruction error, 90.5 % explained variance on Cityscapes. | F9, F13 |
+| R7 | **PCA basis fit on Cityscapes RGB.** It may truncate IR features more than RGB, which would confound H1 and H2. Caching full 3072-d features would cost about 390 GB, against about 145 GB for the PCA cache (30,787 frames, F2). **Decided (F1):** cache PCA features only, and measure the PCA loss per modality on a subset with full features encoded on the fly. In-domain baseline: 3.1 % relative reconstruction error, 90.5 % explained variance on Cityscapes. | F9, F13 |
 | R8 | DINO-Foresight is **deterministic** (SmoothL1 regression), so predictions may be blurred toward the mean. That is part of what H3 measures, but it also means no sampling and no best-of-N. | F13 |
+| R10 | **Annotation asymmetry between modalities (F2).** On the time-synced test frames, thermal has far fewer boxes than RGB for sign (ratio 0.33), light (0.38) and bike (0.25), while person and car are ≈ 1. Train/val ratios are much closer to 1. So per-class AP for sign/light/bike compares different labelling densities, not just modalities, and an RGB detector is credited for objects the thermal GT never labels. H1/H2 conclusions should be checked on person + car alone, and per-class results reported. | F6, F9, F12 |
 | R9 | Double domain gap: the model was trained on Cityscapes (German cities, daytime RGB). FLIR RGB is already out of domain, so the RGB sanity check matters before any IR conclusion is drawn. | F10 |

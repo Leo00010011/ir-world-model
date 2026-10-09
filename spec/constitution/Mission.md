@@ -6,6 +6,7 @@ Show that the features predicted by a latent-space world model don't keep all th
 
 ## Change log
 
+- **2026-10-09: label space fixed to 6 FLIR classes (F2).** Mission originally planned 3 coarse classes (vehicle, pedestrian, cyclist). After a class-imbalance study of the as-downloaded annotations, the label space is the 6 most frequent FLIR classes: person, bike, car, motor, light, sign. There is no coarse mapping. Boxes of every other class (truck, bus, other vehicle, …) are ignore regions: neither targets nor background. Size buckets (APS/M/L) use areas normalised to a 640×512 frame, so RGB and thermal buckets cover the same objects. See `spec/2026-10-08-flir-readers-class-mapping/`.
 - **2026-10-01: world model switched from FlowWM to DINO-Foresight.** FlowWM ([Porcher et al., 2026, arXiv:2606.29059](https://arxiv.org/abs/2606.29059)) has not released its weights, and we cannot retrain it. DINO-Foresight ([Karypidis et al., NeurIPS 2025, arXiv:2412.11673](https://arxiv.org/abs/2412.11673)) follows the same recipe: forecast in the feature space of a frozen DINO encoder, then decode with frozen task heads. Its checkpoints are public. The research questions are unchanged. What changes is the encoder (DINOv2 instead of DINOv3), the feature space (PCA-reduced), the temporal protocol, and the fact that the model is deterministic. If FlowWM weights appear later, it can be added as a second world model behind the same adapter API.
 
 ## The problem
@@ -40,7 +41,7 @@ Other measures include distance of predicted features to the real-feature manifo
 
 ## Dataset
 
-**FLIR ADAS v2** (Teledyne), with paired thermal and RGB cameras, 15 annotated classes and COCO-format annotations. The user obtains the data; the repo only reads it.
+**FLIR ADAS v2** (Teledyne), with paired thermal and RGB cameras and COCO-format annotations (80 COCO-style categories declared, 16 with boxes; we use 6, see Evaluation protocol). The user obtains the data; the repo only reads it.
 
 | Split | Temporal? | Role in this project |
 |---|---|---|
@@ -81,8 +82,8 @@ FLIR ADAS v2 (raw, user-provided)
 
 ## Evaluation protocol
 
-- **Primary metric:** COCO **AP** and **AP50** over the 3 coarse classes, mapped from FLIR as vehicle ← {car, truck, bus, motor, other vehicle}, pedestrian ← {person}, cyclist ← {bike}. This mirrors DINO-Foresight's instance-level metrics (AP, AP50). The final mapping is fixed in the data-module spec.
-- **Secondary metrics:** APS/M/L (APL was the FlowWM paper's metric, so we keep it for comparison), plus mAP over all FLIR classes.
+- **Primary metric:** COCO **AP** and **AP50** over the **6 FLIR classes person, bike, car, motor, light, sign** (`irwm.data.classes`, fixed by F2). Boxes of every other FLIR class are **ignore regions** (exported as crowd GT, so detections on them are neither TP nor FP). This mirrors DINO-Foresight's instance-level metrics (AP, AP50).
+- **Secondary metrics:** APS/M/L with areas **normalised to a 640×512 frame** (APL was the FlowWM paper's metric, so we keep it for comparison), plus per-class AP. Per-class comparisons across modalities must account for the annotation asymmetry in the test split (Roadmap R10).
 - **Horizons:** **short-term = 1 step** (≈0.17 s) and **mid-term = 3 autoregressive steps** (≈0.5 s), as in DINO-Foresight. For the horizon curve we extend to 6 steps (≈1.0 s).
 - **Determinism:** DINO-Foresight is deterministic, so there is a single prediction per clip and no best-of-N.
 - **Baselines, all scored on the same frames:**
