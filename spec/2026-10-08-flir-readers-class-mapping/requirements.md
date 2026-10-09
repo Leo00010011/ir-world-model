@@ -34,7 +34,7 @@ Out of scope:
 ## Functional Requirements
 
 **FR1 — Dataset root (`irwm/data/flir.py`, `irwm/conf/flir/default.yaml`).**
-- `FLIR_DIRNAME = "teledyine_flir_adas_v2"`: the folder name exactly as it is on disk, misspelling included.
+- `FLIR_DIRNAME = "teledyne_flir_adas_v2"`: the folder name exactly as it is on disk, misspelling included.
 - `flir_root() -> Path` returns `irwm.utils.paths.data_root() / FLIR_DIRNAME`.
 - The layout is the zip's own:
   - split `<split_dir>` lives at `<root>/FLIR_ADAS_v2/<split_dir>/`;
@@ -46,7 +46,7 @@ Out of scope:
   | `rgb` | `images_rgb_train` | `images_rgb_val` | `video_rgb_test` |
   | `thermal` | `images_thermal_train` | `images_thermal_val` | `video_thermal_test` |
 
-- The Hydra group `flir/default.yaml` contains `root: ${paths.data_root}/teledyine_flir_adas_v2`. `irwm_base.yaml` lists `flir: default` in its defaults.
+- The Hydra group `flir/default.yaml` contains `root: ${paths.data_root}/teledyne_flir_adas_v2`. `irwm_base.yaml` lists `flir: default` in its defaults.
 - Every reader function takes `root: Path | None = None`. `None` means `flir_root()`.
 - Errors:
   - unknown `modality` or `split` → `ValueError` listing the valid values;
@@ -174,7 +174,7 @@ def size_bucket(area: float) -> Literal["S", "M", "L"]: ...
 # lib/irwm/data/flir.py
 Modality = Literal["rgb", "thermal"]
 Split = Literal["train", "val", "test"]
-FLIR_DIRNAME: str                       # "teledyine_flir_adas_v2"
+FLIR_DIRNAME: str                       # "teledyne_flir_adas_v2"
 def flir_root() -> Path: ...
 def split_dir(modality: Modality, split: Split, root: Path | None = None) -> Path: ...
 def load_rgb_thermal_map(root: Path | None = None) -> dict[str, str]: ...
@@ -207,9 +207,9 @@ def render_markdown(stats: dict) -> str: ...
 
 | Item | Direction | Notes |
 |---|---|---|
-| `$IRWM_DATA_ROOT/teledyine_flir_adas_v2/FLIR_ADAS_v2/<split_dir>/{coco.json,data/*.jpg}` | read | ~30.8k JPEGs, 6 split dirs. On ctdesk236: `IRWM_DATA_ROOT=/home/leonardo.ulloa/projects/data` |
+| `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/FLIR_ADAS_v2/<split_dir>/{coco.json,data/*.jpg}` | read | ~30.8k JPEGs, 6 split dirs. On ctdesk236: `IRWM_DATA_ROOT=/home/leonardo.ulloa/projects/data` |
 | `.../FLIR_ADAS_v2/video_*_test/index.json` | read | `videos[].tags` only (36 MB per modality) |
-| `$IRWM_DATA_ROOT/teledyine_flir_adas_v2/rgb_to_thermal_vid_map.json` | read | 3749 entries |
+| `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/rgb_to_thermal_vid_map.json` | read | 3749 entries |
 | `$IRWM_OUTPUT_ROOT/data_stats/<date>/<time>/flir_stats.{json,md}` | write | Hydra run dir |
 | W&B project `ir-world-model`, group `data_stats` | write | `WANDB_MODE` honoured |
 | `pillow` | new dep | Declared explicitly in `lib/pyproject.toml` (`pillow>=10`). It is already in `uv.lock` (12.3.0) through torchvision |

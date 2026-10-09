@@ -17,7 +17,7 @@
   - Thermal is unchanged by it.
   - Native buckets are still reported in the stats for reference.
   - Bucketing in model-input pixels was rejected, because it depends on R5, which is still open.
-- **The data is read from the as-downloaded layout under one configurable root** (user decision, 2026-10-08). `$IRWM_DATA_ROOT/teledyine_flir_adas_v2/` contains `FLIR_ADAS_v2/<split_dir>/`, and the map file sits next to `FLIR_ADAS_v2/`, not inside it. The folder name is kept exactly as on disk, misspelling included.
+- **The data is read from the as-downloaded layout under one configurable root** (user decision, 2026-10-08). `$IRWM_DATA_ROOT/teledyne_flir_adas_v2/` contains `FLIR_ADAS_v2/<split_dir>/`, and the map file sits next to `FLIR_ADAS_v2/`, not inside it. The folder name is kept exactly as on disk, misspelling included.
   - This **deviates from TechStack §4.1** (`$IRWM_DATA_ROOT/flir_adas_v2/`) and from the comment in `.env.example` (line 3). Both must be corrected (flagged).
   - The name exists in exactly two places: `FLIR_DIRNAME` and `conf/flir/default.yaml`. A test keeps them equal.
   - **Reminder (TechStack §6):** no absolute paths in code or configs. `/home/leonardo.ulloa/...` goes only in the git-ignored `.env`.
@@ -61,13 +61,13 @@
 - **Pillow becomes an explicit dependency of `irwm`.** It is currently only transitive, through torchvision. `uv.lock` already has 12.3.0, so nothing new is downloaded.
 
 ## Step 1 — Shared config group and dataset root
-- Create `lib/irwm/conf/flir/default.yaml` with one key: `root: ${paths.data_root}/teledyine_flir_adas_v2`, plus a comment pointing to this spec.
+- Create `lib/irwm/conf/flir/default.yaml` with one key: `root: ${paths.data_root}/teledyne_flir_adas_v2`, plus a comment pointing to this spec.
 - Add `- flir: default` to the defaults of `lib/irwm/conf/irwm_base.yaml`, after `paths`.
 - In `lib/irwm/data/flir.py`, define:
   - `FLIR_DIRNAME`;
   - `_SPLIT_DIRS: dict[tuple[str, str], str]`, the FR1 table;
   - `flir_root()` and `split_dir()`, with the FR1 errors.
-- Update the comment in `.env.example` line 3 to say `expects teledyine_flir_adas_v2/ inside`.
+- Update the comment in `.env.example` line 3 to say `expects teledyne_flir_adas_v2/ inside`.
 
 Covers: FR1.
 

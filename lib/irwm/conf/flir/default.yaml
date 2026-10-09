@@ -1,0 +1,4 @@
+# FLIR ADAS v2, as-downloaded layout (spec/2026-10-08-flir-readers-class-mapping, FR1).
+# The folder name is kept exactly as on disk, misspelling included; it must equal
+# irwm.data.flir.FLIR_DIRNAME (checked by tests/test_flir_data.py).
+root: ${paths.data_root}/teledyne_flir_adas_v2

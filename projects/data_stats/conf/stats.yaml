@@ -1,0 +1,13 @@
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: data_stats
+
+modalities: [rgb, thermal]
+splits: [train, val, test]
+check_files: true         # read every JPEG header and list orphan files

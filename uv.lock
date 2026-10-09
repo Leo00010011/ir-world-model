@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.11.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -14,6 +14,7 @@ supported-markers = [
 members = [
     "ir-world-model",
     "irwm",
+    "irwm-data-stats",
     "irwm-dinof-audit",
     "irwm-smoke",
 ]
@@ -374,6 +375,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "irwm" },
+    { name = "irwm-data-stats" },
     { name = "irwm-dinof-audit" },
     { name = "irwm-smoke" },
 ]
@@ -386,6 +388,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "irwm", editable = "lib" },
+    { name = "irwm-data-stats", virtual = "projects/data_stats" },
     { name = "irwm-dinof-audit", virtual = "projects/dinof_audit" },
     { name = "irwm-smoke", virtual = "projects/smoke" },
 ]
@@ -402,6 +405,7 @@ dependencies = [
     { name = "hydra-submitit-launcher" },
     { name = "lightning" },
     { name = "numpy" },
+    { name = "pillow" },
     { name = "python-dotenv" },
     { name = "torch", version = "2.2.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'win32'" },
     { name = "torch", version = "2.2.0+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'win32'" },
@@ -424,6 +428,7 @@ requires-dist = [
     { name = "hydra-submitit-launcher", specifier = "==1.2.0" },
     { name = "lightning", specifier = ">=2.4,<2.6" },
     { name = "numpy", specifier = ">=1.26,<2" },
+    { name = "pillow", specifier = ">=10" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "scikit-learn", marker = "extra == 'reference'", specifier = "==1.5.2" },
     { name = "timm", marker = "extra == 'reference'", specifier = ">=0.9" },
@@ -436,6 +441,17 @@ requires-dist = [
     { name = "wandb", specifier = ">=0.17" },
 ]
 provides-extras = ["reference"]
+
+[[package]]
+name = "irwm-data-stats"
+version = "0.1.0"
+source = { virtual = "projects/data_stats" }
+dependencies = [
+    { name = "irwm" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "irwm", editable = "lib" }]
 
 [[package]]
 name = "irwm-dinof-audit"

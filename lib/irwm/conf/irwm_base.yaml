@@ -4,6 +4,7 @@
 #   project: <project folder name>
 defaults:
   - paths: default
+  - flir: default
   - cluster: local
   - wandb: default
   - _self_
