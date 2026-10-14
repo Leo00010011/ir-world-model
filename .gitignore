@@ -34,3 +34,5 @@ slurm-*.out
 .DS_Store
 Thumbs.db
 *.json
+# committed clip sets (F3): small reference indices, not data
+!lib/irwm/data/clip_sets/*.json

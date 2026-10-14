@@ -46,6 +46,7 @@ ir-world-model/
 ├── projects/                   # one folder per research project; entry points + configs only
 │   ├── smoke/                  # permanent env/cluster health check (toy Lightning run)
 │   ├── data_stats/             # F2: FLIR dataset statistics / class-imbalance report
+│   ├── clip_index/             # F3: build the committed video clip set + count report
 │   ├── dinof_audit/            # F1: download/pin DINO-Foresight artefacts, audit the reference code
 │   ├── feature_extraction/     # build the DINOv2 caches
 │   │   ├── conf/               # Hydra configs
@@ -90,7 +91,7 @@ Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed by the F1 audit
 ### 3.3 World model: DINO-Foresight (frozen, zero-shot)
 - Official code from `Sta8is/DINO-Foresight` (MIT), as a submodule. The checkpoint is `dinof_highres.ckpt` from Hugging Face `Sta8is/DINO-Foresight`. **Used zero-shot: never retrained in Phases 0–3.**
 - A masked feature transformer (12 layers, hidden 1152, 8 heads, separable space–time attention) that predicts **1 future frame from 4 context frames** in PCA space. It is **deterministic** (SmoothL1 regression).
-- Temporal protocol: training sampled a random step of 2–4 frames at 17 Hz (0.118–0.235 s); evaluation uses a fixed step of 3 (≈ **0.176 s**) *(F1)*. For FLIR at 30 FPS we use **stride 5 (0.167 s)**, inside the training range *(F1; F3 checks the FPS)*. Longer horizons come from an **autoregressive rollout in PCA space**: the prediction overwrites the masked last slot, then the window shifts by one *(F1)*. Short-term = 1 step, mid-term = 3 steps; we evaluate up to 6 steps.
+- Temporal protocol: training sampled a random step of 2–4 frames at 17 Hz (0.118–0.235 s); evaluation uses a fixed step of 3 (≈ **0.176 s**) *(F1)*. For FLIR at 30 FPS we use **stride 5 (0.167 s)**, inside the training range *(F1)*. The 30 FPS comes from the FLIR README and cannot be verified, because the test split has no per-frame timestamps *(F3)*. Longer horizons come from an **autoregressive rollout in PCA space**: the prediction overwrites the masked last slot, then the window shifts by one *(F1)*. Short-term = 1 step, mid-term = 3 steps; we evaluate up to 6 steps.
 - Inference precision: **fp16 autocast**, as in the reference `16-mixed` (SmoothL1 changes by 0.01 %). Equivalence tests run in fp32, where the reference is reproduced exactly *(F1)*.
 - Positional embeddings are factorised tables (time, height, width). A token grid other than 32×64 is supported by loading with `high_res_adapt=True`, which bilinearly interpolates the height/width tables *(F1)*.
 - The adapter exposes `rollout(context_feats[4, H', W', 1152], n_steps) -> [n_steps, H', W', 1152]`.
@@ -132,7 +133,7 @@ attrs: encoder_tag, layers, resolution, resize_policy, dinov2_weights_sha, pca_s
 Invariants: rows are in a deterministic order (sorted by `image_id`). Every row matches exactly one COCO image. Readers look up by `image_id` and never by position alone.
 
 ### 4.3 Prediction cache (HDF5)
-Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`. It stores predicted future features `[n_clips, n_steps, H', W', 1152]` fp16 (deterministic, so there is no sample axis), plus per-clip context and target frame ids so every predicted frame can be matched to its ground-truth annotations. The WM-eval spec defines the exact layout.
+Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`, with `<clip_set>` a committed clip set read through `irwm.data.clips.ClipIndex.load()` (default `flir_test_fs5_c4f6_cs10`, F3). Rows follow `clip_id`. It stores predicted future features `[n_clips, n_steps, H', W', 1152]` fp16 (deterministic, so there is no sample axis), plus per-clip context and target frame ids so every predicted frame can be matched to its ground-truth annotations. The WM-eval spec defines the exact layout.
 
 ### 4.4 Checkpoints and outputs
 - Checkpoints go in `$IRWM_CKPT_ROOT/<project>/<run_name>/`. Lightning `last.ckpt` is always saved so SLURM requeues can resume.
@@ -184,7 +185,8 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Shared Hydra group `flir` (`flir.root`) | `lib/irwm/conf/flir/default.yaml` | F2 | ✓ |
 | Dataset statistics (`compute_stats`, `render_markdown`, `COCO80_NAME`) + entry point | `lib/irwm/data/stats.py`, `projects/data_stats/` | F2 | ✓ (ctdesk236) |
 | Stats notebook | `notebooks/flir_stats.ipynb` | F2 | ✓ |
-| Video clip builder (30 FPS → stride 5, 4 ctx + 6 future) | `lib/irwm/data/clips.py` | F3 | ☐ |
+| Video clip index: `ClipIndex`, `Clip`, `check_pairing`, `find_segments`, `build_clip_index`, `dump_clip_index`/`write_clip_index` (never overwrites a differing file), `summarise` | `lib/irwm/data/clips.py` | F3 | ✓ |
+| Committed clip set `flir_test_fs5_c4f6_cs10` (330 clips, 304 evaluable; shared RGB/thermal rows) + builder entry point | `lib/irwm/data/clip_sets/`, `projects/clip_index/` | F3 | ✓ (ctdesk236) |
 | DINOv2 encoder wrapper + PCA | `lib/irwm/features/encoder.py` | F4 | ☐ |
 | HDF5 feature cache | `lib/irwm/features/cache.py` | F5 | ☐ |
 | DINO-DETR head | `lib/irwm/detection/` | F7 | ☐ |

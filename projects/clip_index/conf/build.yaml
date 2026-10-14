@@ -1,0 +1,15 @@
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: clip_index
+
+frame_stride: 5           # raw frames per step: 0.167 s at 30 FPS (F1)
+n_context: 4
+n_future: 6
+clip_stride: 10           # raw frames between consecutive clip starts in a segment
+install: false            # writes into lib/irwm/data/clip_sets/; refuses to overwrite a different file

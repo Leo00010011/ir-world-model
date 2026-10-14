@@ -4,3 +4,5 @@
 *.py text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf
+# committed clip sets (F3): byte-exact, their SHA-256 is pinned in tests/test_clip_index.py
+lib/irwm/data/clip_sets/*.json -text
