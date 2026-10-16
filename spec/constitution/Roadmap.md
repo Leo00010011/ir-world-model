@@ -2,9 +2,15 @@
 
 Features are numbered **F0, F1, …**. Each one should fit in a single session through `/create-spec` → `/build-spec`, and each lists its dependencies. The roadmap is updated as we go: split, merge or reorder features whenever reality disagrees with the plan. When a feature is done, mark it ✓ DONE here and update the Component Registry in `TechStack.md`.
 
-Status legend: ☐ todo · ◐ in progress · ✓ DONE · ⛔ blocked
+Status legend: ☐ todo · ◐ in progress · ✓ DONE · ⛔ blocked · ⏸ deferred
 
 > **2026-10-01 pivot:** the world model is now **DINO-Foresight** (DINOv2), replacing FlowWM (DINOv3), which has no public weights. No feature had been started, so the change only touches the plan. See `Mission.md` → Change log.
+
+> **2026-10-15 re-scope (current milestone):** the next goal is a **working DINO-DETR detector trained on DINOv2-Reg features**, for RGB and IR, as fast as possible. The critical path is **F4 → F7 → F8**:
+> - **F5 (feature cache) is deferred.** F8 encodes features on the fly with the frozen F4 encoder. The cache is built later only if it turns out to be needed (see F5).
+> - **F6 (evaluator) and F9 (oracle evaluation) are deferred.** They come back after the detector exists, before H1 is claimed. F8 selects checkpoints with an off-the-shelf val mAP instead.
+> - Feature numbers are kept stable, so the execution order is no longer the numeric order.
+> - R5 (aspect-ratio policy) must now be decided **before F8**, because it fixes the token grid the detectors are trained on.
 
 ---
 
@@ -81,11 +87,14 @@ Parse the video test split into sequences and recover frame order from `FlirReco
 **Done when:** the clip index exists for both modalities and the clip counts are recorded in the spec.
 **Depends on:** F2 (and F1 for the stride).
 
-### F4 · DINOv2 encoder wrapper ☐
+### F4 · DINOv2 encoder wrapper ☐ (critical path → F8)
 `irwm.features.encoder`: a frozen DINOv2-Reg ViT-B/14 that follows the recipe confirmed in F1 (blocks 3/6/9/12 concatenated → 3072-d, then DINO-Foresight's PCA → 1152-d), with the resolution policy as a config option (R5 is still open: implement (a) stretch, (b) crop and (c) native; (d) two windows only if R5 picks it), with 1→3 channel replication for thermal. Exposes both `encode_full` (3072-d) and `encode_pca` (1152-d), plus `pca_inverse`. Uses the DINOv2 hub code pinned in `irwm.worldmodel.assets` (`dinof_release`) and `irwm.features.pca.PCABasis`. Must produce **numerically identical** features to DINO-Foresight's own extraction (`Dino_f.extract_features` + `pca_transform`) on the demo clip, in fp32 (F1 reached |Δ| = 0). The recipe is in `audit.md` (b): final norm on every block, drop 1 + 4 tokens, standardise before PCA.
+Because F8 now encodes on the fly, the wrapper must also be usable **inside a training step**: batched GPU input, fp16 autocast, frozen (`eval()`, `requires_grad_(False)`, no grad), and a throughput figure (frames/s on ctcomp3) recorded in the spec so F8 can budget epochs.
 **Depends on:** F0, F1.
 
-### F5 · Feature cache builder ☐
+### F5 · Feature cache builder ⏸ deferred (2026-10-15)
+> **Deferred:** not needed for the current milestone. F8 encodes on the fly. Revisit if (a) on-the-fly encoding dominates F8 training time, (b) Phase 3 (F10–F13) needs the same features many times, or (c) R7 asks for full-feature analyses at scale. The design below is kept as the starting point.
+
 A SLURM-friendly, resumable job that encodes every frame (train, val, video test; RGB and IR) into the HDF5 layout in TechStack §4.2. It includes a reader API (lookup by `image_id`, a Lightning-compatible dataset) and a storage/throughput report. At 32×64 tokens the PCA cache is about 4.7 MB per frame, so about **145 GB** for the 30,787 frames counted in F2 (see R7). Frames come from `irwm.data.flir.FlirImageDataset`. The dataset must first be copied to ctcomp3 (deferred from F2).
 **Depends on:** F2, F4.
 
@@ -93,26 +102,35 @@ A SLURM-friendly, resumable job that encodes every frame (train, val, video test
 
 ## Phase 2: Detection on real features (H1)
 
-### F6 · Detection evaluator ☐
+**Current focus: F7 and F8.** The goal of this phase in the current milestone is a DINO-DETR detector that takes DINOv2-Reg features as input and is trained on FLIR, one per modality. Rigorous evaluation (F6) and the H1 comparison (F9) come after it. Execution order: **F7 → F8**, then F6 → F9.
+
+### F7 · DINO-DETR head port ☐ (current focus)
+DINO-DETR as a plain `nn.Module` on `[B, C, H', W']` features (C = 1152 PCA channels by default, configurable so 3072-d full features can be tried; see TechStack §3.2): input projection, deformable transformer encoder/decoder, query selection, denoising queries, Hungarian matcher and criterion, plus box post-processing to `(boxes, scores, labels)` in image pixels. Single-scale input (one `H'×W'` map, default 32×64); whether to synthesise extra scales (e.g. strided convs, as in ViTDet's simple feature pyramid) is decided in the spec. Architecture hyperparameters are copied from the detrex reference config. No detectron2/detrex runtime dependency.
+**Done when:** unit tests cover shapes, matcher and loss on CPU; the head overfits a tiny synthetic set (loss → ~0, predicted boxes match GT); the hyperparameters are listed next to the detrex config they come from.
+**Depends on:** F0.
+
+### F8 · Detector training pipeline ☐ (current focus)
+A `LightningModule` and a `LightningDataModule` that train the F7 head on **features encoded on the fly** by the frozen F4 encoder (no cache): FLIR images from `FlirImageDataset` (F2) → resolution policy (R5) → frozen DINOv2-Reg + PCA → F7 head. Box targets are mapped to the encoder input frame with the same transform as the image, and ignore regions are handled as decided in the spec (e.g. dropped from targets; matched predictions not penalised). Hydra configs for `det_rgb` and `det_ir`. Trained on `train` and selected on `val` with W&B logging, using an **off-the-shelf val mAP** (e.g. torchmetrics `MeanAveragePrecision`, or `pycocotools` on `FlirSplit.to_coco_gt`; choice in the spec). The rigorous evaluator (F6) is not required. SLURM-ready with auto-requeue (TechStack §5). Whether to use image augmentation (possible now that features are not cached; must be identical for both modalities) is decided in the spec. An optional Optuna sweep config can be added.
+Steps: (1) overfit a few hundred real `train` frames end-to-end to prove the pipeline; (2) full RGB and IR runs on ctcomp3 (user step); (3) record val AP/AP50, per-class AP, training time and encoder share of step time in a results note.
+**Done when:** two frozen checkpoints `det_rgb` and `det_ir` exist with their val AP/AP50 logged in W&B and in the spec, and both are clearly above zero on person and car (R3, R10). If encoding is the bottleneck, the note says so and F5 is revisited.
+**Depends on:** F2, F4, F7, and the R5 decision. *(Before 2026-10-15: F5, F6, F7.)* The dataset must be on ctcomp3 (deferred from F2).
+
+### F6 · Detection evaluator ⏸ deferred (2026-10-15)
+> **Deferred:** not needed to get a working detector (F8 uses an off-the-shelf val mAP). Needed before F9.
+
 `irwm.eval`, built as pure functions with tests on synthetic boxes:
 - COCO-eval wrapper (AP, AP50, APS/M/L, per-class AP) over the 6 F2 classes, on the GT from `FlirSplit.to_coco_gt` (ignore regions as crowd GT, APS/M/L on 640×512-normalised areas). Adds `pycocotools`.
 - per-horizon breakdown
 - bootstrap CIs over clips (R2)
 
 Results are written as JSON.
-**Depends on:** F0 (independent of the data; can run in parallel with Phase 1).
+**Depends on:** F0 (independent of the data).
 
-### F7 · DINO-DETR head port ☐
-DINO-DETR as a plain `nn.Module` on `[B, C, H', W']` features (C = 1152 PCA channels by default; see TechStack §3.2): query selection, denoising queries, Hungarian matcher and criterion. Architecture hyperparameters are copied from the detrex reference config. Unit tests cover shapes and loss, and the head must overfit a tiny synthetic set.
-**Depends on:** F0.
+### F9 · Oracle evaluation → H1 ⏸ deferred (2026-10-15)
+> **Deferred:** comes after F8 and F6. Video-test features are encoded on the fly unless F5 has been built by then.
 
-### F8 · Detector training pipeline ☐
-A `LightningModule` and a `LightningDataModule` over cached features, with Hydra configs for `det_rgb` and `det_ir`. The model is trained on `train` and selected on `val` with W&B logging. An optional Optuna sweep config can be added. Produces the two frozen detector checkpoints.
-**Depends on:** F5, F6, F7.
-
-### F9 · Oracle evaluation → H1 ☐
 Evaluate `det_rgb` on RGB video-test features and `det_ir` on IR video-test features, on the primary (AP, AP50) and secondary metrics, and also per static `val` split. Produces **Result Table 1: does IR beat RGB on real DINOv2 features?** It also includes a check on a `val` subset using full 3072-d features (encoded on the fly) to show how much the Cityscapes PCA costs each modality (R7).
-**Depends on:** F8.
+**Depends on:** F6, F8.
 
 ---
 
@@ -120,7 +138,7 @@ Evaluate `det_rgb` on RGB video-test features and `det_ir` on IR video-test feat
 
 ### F10 · DINO-Foresight adapter ☐
 `irwm.worldmodel`: load the checkpoint, and `rollout(context_feats, n_steps)` → `[n_steps, H', W', 1152]`, autoregressive exactly as in the reference code (the prediction overwrites the masked last slot, then the window shifts, all in PCA space) and deterministic. Collect each step's prediction directly rather than slicing the `sample_unroll` window, whose last slot is a duplicate. Equivalence test: equal to `sample_unroll` in fp32 (F1: |Δ| = 0). Inference in fp16 autocast. As a **sanity check**, run it on a handful of FLIR RGB clips: error should be lowest at step 1, grow with the horizon, and beat copy-last.
-**Depends on:** F1 (gate passed), F5.
+**Depends on:** F1 (gate passed), F4 (F5 if it has been built by then).
 
 ### F11 · Rollout job and prediction cache ☐
 A resumable SLURM job that rolls out every clip from F3 for both modalities for 6 steps, stored in the HDF5 layout in TechStack §4.3. It reports the storage size and GPU-hours.
@@ -178,7 +196,7 @@ Generalisation check: apply the best technique to RGB and, if feasible, to anoth
 | R2 | The FLIR video test split is small (3749 frames per modality in 8 sequences, F2), so there may be few clips and wide confidence intervals. **F3:** 330 clips (304 evaluable) in 8 sequences / 11 segments; clips overlap, so bootstrap by sequence or segment, not by clip. Bike is the weakest class: 113 thermal / 446 RGB test boxes. | F3, F6 |
 | R3 | FLIR has few *large* objects. The primary metric is now AP/AP50 over all sizes, but small objects on a 14-px patch grid may give low absolute AP. **F2:** 89 % (RGB) and 86 % (thermal) of kept test boxes are S (< 32² on the 640×512-normalised area); light and sign are ≥ 93 % S in every split. | F2 stats, F9 |
 | R4 | 1→3 channel replication for thermal is a design choice that may itself hurt DINOv2 IR features. | F4 / F9 |
-| R5 | **Aspect ratio. OPEN: decide at training time, before F5** (it fixes the cache grid and both detectors, so changing it later means re-encoding everything and retraining). DINO-Foresight was trained at 448×896 (2:1 → 32×64 tokens of 14 px). FLIR thermal is 640×512 (5:4) and RGB varies. Options, with px of the original FLIR frame per token: **(a)** stretch to 448×896: full frame, trained size, ~1.6× distortion, 10×16 px/token. **(b)** crop the central 2:1 band, then resize to 448×896: no distortion, trained size, but drops 96 rows top and 96 bottom (37.5 % of the frame; boxes lost or truncated there), 10×10 px/token. **(c)** native 448×560: full frame, no distortion, but an untrained 32×40 grid (37.5 % fewer tokens, positional embeddings interpolated 64→40) and 16×16 px/token. **(d)** two overlapping 2:1 windows (top and bottom) merged: full frame, no distortion, trained grid, but 2× cache and compute (reference `sliding_window_inference` code exists). Not tested. **F1 probe** (one Cityscapes demo clip center-cropped to 5:4; 1-step; ratio = model SmoothL1 ÷ copy-last SmoothL1 in PCA space, lower is better): uncropped 2:1 reference 0.607; (a) 0.662; (b) 0.551; (c) 0.648. **Reading:** every policy beats copy-last by 34–45 %, so neither the stretch nor the 32×40 grid breaks the model. (a) and (c) are tied within noise (one clip). (b)'s win is likely because the central band is easier: it even beats the uncropped reference, and it pays with the lost field of view. The metric measures forecasting only, not small-object detection (R3). **Before deciding:** repeat the probe on a few FLIR RGB/IR clips (no labels needed), and weigh field of view and px/token against detection needs. Provisional preference: (a). | before F5 |
+| R5 | **Aspect ratio. OPEN: decide before F8** (it fixes the token grid of both detectors, and of the cache if F5 is built, so changing it later means retraining and re-encoding). DINO-Foresight was trained at 448×896 (2:1 → 32×64 tokens of 14 px). FLIR thermal is 640×512 (5:4) and RGB varies. Options, with px of the original FLIR frame per token: **(a)** stretch to 448×896: full frame, trained size, ~1.6× distortion, 10×16 px/token. **(b)** crop the central 2:1 band, then resize to 448×896: no distortion, trained size, but drops 96 rows top and 96 bottom (37.5 % of the frame; boxes lost or truncated there), 10×10 px/token. **(c)** native 448×560: full frame, no distortion, but an untrained 32×40 grid (37.5 % fewer tokens, positional embeddings interpolated 64→40) and 16×16 px/token. **(d)** two overlapping 2:1 windows (top and bottom) merged: full frame, no distortion, trained grid, but 2× cache and compute (reference `sliding_window_inference` code exists). Not tested. **F1 probe** (one Cityscapes demo clip center-cropped to 5:4; 1-step; ratio = model SmoothL1 ÷ copy-last SmoothL1 in PCA space, lower is better): uncropped 2:1 reference 0.607; (a) 0.662; (b) 0.551; (c) 0.648. **Reading:** every policy beats copy-last by 34–45 %, so neither the stretch nor the 32×40 grid breaks the model. (a) and (c) are tied within noise (one clip). (b)'s win is likely because the central band is easier: it even beats the uncropped reference, and it pays with the lost field of view. The metric measures forecasting only, not small-object detection (R3). **Before deciding:** repeat the probe on a few FLIR RGB/IR clips (no labels needed), and weigh field of view and px/token against detection needs. Provisional preference: (a). | before F8 |
 | R6 | Phase 4 needs unlabeled IR video that is disjoint from test. | F14 |
 | R7 | **PCA basis fit on Cityscapes RGB.** It may truncate IR features more than RGB, which would confound H1 and H2. Caching full 3072-d features would cost about 390 GB, against about 145 GB for the PCA cache (30,787 frames, F2). **Decided (F1):** cache PCA features only, and measure the PCA loss per modality on a subset with full features encoded on the fly. In-domain baseline: 3.1 % relative reconstruction error, 90.5 % explained variance on Cityscapes. | F9, F13 |
 | R8 | DINO-Foresight is **deterministic** (SmoothL1 regression), so predictions may be blurred toward the mean. That is part of what H3 measures, but it also means no sampling and no best-of-N. | F13 |
