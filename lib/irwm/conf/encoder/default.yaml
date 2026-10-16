@@ -1,0 +1,6 @@
+# Frozen DINOv2-Reg ViT-B/14 + DINO-Foresight PCA encoder (irwm.features.encoder, F4).
+# policy: stretch | crop | native (irwm.features.preprocess). Roadmap R5 is still OPEN:
+# stretch is only the provisional preference and equals the reference transform.
+policy: stretch
+precision: fp16           # fp16 = CUDA autocast as the reference 16-mixed; fp32 for diagnostics
+hub_version: dinof_release  # DINOv2 hub code pinned in irwm.worldmodel.assets

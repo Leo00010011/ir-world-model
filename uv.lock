@@ -17,6 +17,7 @@ members = [
     "irwm-clip-index",
     "irwm-data-stats",
     "irwm-dinof-audit",
+    "irwm-feature-extraction",
     "irwm-smoke",
 ]
 
@@ -490,6 +491,7 @@ dependencies = [
     { name = "irwm-clip-index" },
     { name = "irwm-data-stats" },
     { name = "irwm-dinof-audit" },
+    { name = "irwm-feature-extraction" },
     { name = "irwm-smoke" },
 ]
 
@@ -508,6 +510,7 @@ requires-dist = [
     { name = "irwm-clip-index", virtual = "projects/clip_index" },
     { name = "irwm-data-stats", virtual = "projects/data_stats" },
     { name = "irwm-dinof-audit", virtual = "projects/dinof_audit" },
+    { name = "irwm-feature-extraction", virtual = "projects/feature_extraction" },
     { name = "irwm-smoke", virtual = "projects/smoke" },
 ]
 
@@ -602,6 +605,17 @@ requires-dist = [
     { name = "irwm", extras = ["reference"], editable = "lib" },
     { name = "matplotlib", specifier = ">=3.8" },
 ]
+
+[[package]]
+name = "irwm-feature-extraction"
+version = "0.1.0"
+source = { virtual = "projects/feature_extraction" }
+dependencies = [
+    { name = "irwm", extra = ["reference"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "irwm", extras = ["reference"], editable = "lib" }]
 
 [[package]]
 name = "irwm-smoke"

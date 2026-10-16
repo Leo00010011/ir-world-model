@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 
 from irwm.utils.paths import repo_root
@@ -276,3 +277,24 @@ def load_demo_frames(
             img = img.crop((left, top, left + cw, top + ch))
         frames.append(transform(img))
     return torch.stack(frames).unsqueeze(0)
+
+
+def one_step(model, x: torch.Tensor) -> tuple[torch.Tensor, float]:
+    """Reference 1-step prediction in PCA space: ``x [B,5,h,w,1152]`` → (pred last frame, loss).
+
+    Exactly ``Dino_f.sample`` minus pre/post-processing (``src/dino_f.py:441-447``): the last
+    frame is fully masked and its SmoothL1 against ``x[:, -1]`` is the reference loss.
+    """
+    masked, mask = model.get_mask_tokens(x, mode="full_mask", mask_frames=1)
+    loss, final = model.forward(x, masked, mask.to(x.device))
+    return final[:, -1], float(loss)
+
+
+def pca_metrics(pred: torch.Tensor, gt: torch.Tensor, beta: float) -> dict:
+    """SmoothL1(beta), MSE and mean per-token cosine between ``[..., C]`` tensors."""
+    pred, gt = pred.float(), gt.float()
+    return {
+        "smoothl1": float(F.smooth_l1_loss(pred, gt, beta=beta)),
+        "mse": float(F.mse_loss(pred, gt)),
+        "cosine": float(F.cosine_similarity(pred, gt, dim=-1).mean()),
+    }

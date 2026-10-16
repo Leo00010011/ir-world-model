@@ -5,6 +5,7 @@
 defaults:
   - paths: default
   - flir: default
+  - encoder: default
   - cluster: local
   - wandb: default
   - _self_

@@ -1,0 +1,12 @@
+[project]
+name = "irwm-feature-extraction"
+version = "0.1.0"
+description = "F4: DINOv2-Reg encoder R5 FLIR probe and throughput (F5 cache if built)."
+requires-python = ">=3.11,<3.12"
+dependencies = ["irwm[reference]"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+irwm = { workspace = true }

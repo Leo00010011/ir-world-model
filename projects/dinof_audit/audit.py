@@ -105,35 +105,14 @@ class Ctx:
         return R.load_demo_frames(img_size, crop).to(self.device)
 
 
-def one_step(model, x: torch.Tensor) -> tuple[torch.Tensor, float]:
-    """Reference 1-step prediction in PCA space: ``x [B,5,h,w,1152]`` → (pred last frame, loss).
-
-    Exactly ``Dino_f.sample`` minus pre/post-processing (``src/dino_f.py:441-447``): the last
-    frame is fully masked and its SmoothL1 against ``x[:, -1]`` is the reference loss.
-    """
-    masked, mask = model.get_mask_tokens(x, mode="full_mask", mask_frames=1)
-    loss, final = model.forward(x, masked, mask.to(x.device))
-    return final[:, -1], float(loss)
-
-
-def pca_metrics(pred: torch.Tensor, gt: torch.Tensor, beta: float) -> dict:
-    """SmoothL1(beta), MSE and mean per-token cosine between ``[..., C]`` tensors."""
-    pred, gt = pred.float(), gt.float()
-    return {
-        "smoothl1": float(F.smooth_l1_loss(pred, gt, beta=beta)),
-        "mse": float(F.mse_loss(pred, gt)),
-        "cosine": float(F.cosine_similarity(pred, gt, dim=-1).mean()),
-    }
-
-
 def forecast_eval(model, frames: torch.Tensor) -> dict:
     """1-step prediction vs truth and vs copy-last, in PCA space."""
     beta = model.args.beta_smoothl1
     with torch.no_grad():
         x = model.preprocess(frames)
-        pred, loss = one_step(model, x.clone())
+        pred, loss = R.one_step(model, x.clone())
     gt, last = x[:, -1], x[:, -2]
-    m, c = pca_metrics(pred, gt, beta), pca_metrics(last, gt, beta)
+    m, c = R.pca_metrics(pred, gt, beta), R.pca_metrics(last, gt, beta)
     return {"model": m, "copy_last": c, "reference_loss": loss,
             "ratio_smoothl1": m["smoothl1"] / c["smoothl1"], "grid": list(x.shape[2:4])}
 
@@ -231,7 +210,7 @@ def section_rollout(ctx: Ctx) -> dict:
     with torch.no_grad():
         x = model.preprocess(frames)
         pred_full, loss_sample = model.sample(frames)  # reference public path
-        pred1, _ = one_step(model, x.clone())
+        pred1, _ = R.one_step(model, x.clone())
         out["shapes"] = {"pca_input": list(x.shape), "sample_output_full": list(pred_full.shape)}
         out["sample_equals_one_step_full"] = maxdiff(pred_full[:, -1], model.postprocess(pred1.unsqueeze(1))[:, 0])
 
@@ -241,7 +220,7 @@ def section_rollout(ctx: Ctx) -> dict:
         xm = model.preprocess(frames)
         steps = []
         for _ in range(3):
-            p, _ = one_step(model, xm.clone())
+            p, _ = R.one_step(model, xm.clone())
             steps.append(p)
             xm[:, -1] = p
             xm = torch.cat((xm[:, 1:], xm[:, -1:]), dim=1)
@@ -254,31 +233,31 @@ def section_rollout(ctx: Ctx) -> dict:
         f0, fn = frames.clone(), frames.clone()
         f0[:, -1] = 0
         fn[:, -1] = torch.randn_like(fn[:, -1])
-        p0, _ = one_step(model, model.preprocess(f0))
-        pn, _ = one_step(model, model.preprocess(fn))
+        p0, _ = R.one_step(model, model.preprocess(f0))
+        pn, _ = R.one_step(model, model.preprocess(fn))
         out["masked_slot_independence"] = {"zeros": maxdiff(p0, pred1), "noise": maxdiff(pn, pred1)}
 
         # Determinism
-        p_again, _ = one_step(model, model.preprocess(frames))
+        p_again, _ = R.one_step(model, model.preprocess(frames))
         out["determinism_max_abs_diff"] = maxdiff(p_again, pred1)
 
         # Precision
         if ctx.cfg.precision_check and ctx.device.type == "cuda":
             with torch.autocast("cuda", dtype=torch.float16):
                 xh = model.preprocess(frames)
-                ph, _ = one_step(model, xh.clone())
+                ph, _ = R.one_step(model, xh.clone())
             gt = x[:, -1]
             out["precision"] = {
                 "fp16_autocast_vs_fp32_max_abs": maxdiff(ph, pred1),
                 "fp16_autocast_vs_fp32_mean_abs": float((ph.float() - pred1).abs().mean()),
-                "smoothl1_fp32": pca_metrics(pred1, gt, beta)["smoothl1"],
-                "smoothl1_fp16_autocast": pca_metrics(ph, gt, beta)["smoothl1"],
+                "smoothl1_fp32": R.pca_metrics(pred1, gt, beta)["smoothl1"],
+                "smoothl1_fp16_autocast": R.pca_metrics(ph, gt, beta)["smoothl1"],
             }
 
         # Dummy PCA-space inputs, batch 2
         g = torch.Generator().manual_seed(0)
         xd = torch.randn(2, 5, 32, 64, 1152, generator=g).to(ctx.device) * x.std()
-        pd, _ = one_step(model, xd)
+        pd, _ = R.one_step(model, xd)
         out["dummy_batch2"] = {"shape": list(pd.shape), "finite": bool(torch.isfinite(pd).all())}
 
         # Timing
@@ -287,7 +266,7 @@ def section_rollout(ctx: Ctx) -> dict:
             ts = []
             for _ in range(ctx.cfg.timing_repeats):
                 t0 = time.perf_counter()
-                one_step(model, x.clone())
+                R.one_step(model, x.clone())
                 torch.cuda.synchronize()
                 ts.append(time.perf_counter() - t0)
             out["timing_1step_forward_s"] = {"median": sorted(ts)[len(ts) // 2], "gpu": torch.cuda.get_device_name(0)}
@@ -303,7 +282,7 @@ def section_hub(ctx: Ctx) -> dict:
         with torch.no_grad():
             f = torch.cat(backbone.get_intermediate_layers(flat, n=LAYERS, reshape=False), dim=-1)
             x = model.pca_transform(f).reshape(1, 5, 32, 64, -1)
-            _, loss = one_step(model, x)
+            _, loss = R.one_step(model, x)
             z = (f - model.mean) / model.std
         feats[name] = f
         res[name] = {"smoothl1_1step": loss, "zscore_mean_abs_of_dim_means": float(z.mean(dim=(0, 1)).abs().mean()),
@@ -363,7 +342,7 @@ def section_segm(ctx: Ctx) -> dict:
     frames = ctx.frames()
     with torch.no_grad():
         x = model.preprocess(frames)
-        pred, _ = one_step(model, x.clone())
+        pred, _ = R.one_step(model, x.clone())
         feats = {
             "oracle": model.extract_features(frames[:, -1]).reshape(1, 32, 64, -1),
             "oracle_pca_roundtrip": model.postprocess(x[:, -1:])[:, 0],

@@ -1,0 +1,19 @@
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: feature_extraction
+
+# Encoder throughput on the GPU (spec/2026-10-16-dinov2-reg-encoder-wrapper, FR12).
+policy: ${encoder.policy}                       # end-to-end part only
+num_workers: ${oc.env:SLURM_CPUS_PER_TASK,8}
+batch_sizes: [1, 16, 64]
+sizes: [[448, 896], [448, 560]]                 # (H, W): stretch/crop and native grids
+precisions: [fp16, fp32]
+e2e_batch_size: 32
+e2e_warmup: 10
+e2e_batches: 100

@@ -116,7 +116,7 @@ Every comparison runs our encoder and the reference code **at the same precision
   3. Stack to `x [1, 5, h, w, 1152]`.
   4. Run `one_step(model, x)` with the reference model under `torch.autocast("cuda", float16)`.
   5. `pca_metrics` of the prediction vs `x[:, -1]`, and of copy-last `x[:, -2]` vs `x[:, -1]`, with `beta = model.args.beta_smoothl1`.
-- The reference model is `load_reference(...)` with `img_size=None` for `stretch`/`crop` and `img_size=(448, 560)` for `native`.
+- The reference model is `load_reference(dinof_dir() / DINOF_HIGHRES, pca_ckpt=dinof_dir() / DINOF_PCA, ...)` (the released PCA file; amended 2026-10-16, see plan Amendments) with `img_size=None` for `stretch`/`crop` and `img_size=(448, 560)` for `native`.
 - It writes `r5_probe.json` to the Hydra run dir with these contents:
   - per-clip rows: `clip_id`, `rgb_video_id`, `segment_index`, modality, policy, model and copy-last `smoothl1`/`cosine`, and `ratio = model_smoothl1 / copy_last_smoothl1`;
   - per (modality, policy): `n_clips`, mean ratio, median ratio, ratio of summed SmoothL1, and per-`rgb_video_id` mean ratio (8 sequences);

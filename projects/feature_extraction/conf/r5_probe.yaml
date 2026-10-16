@@ -1,0 +1,16 @@
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: feature_extraction
+
+# R5 FLIR probe (spec/2026-10-16-dinov2-reg-encoder-wrapper, FR11): 1-step forecast vs
+# copy-last for every clip, modality and resolution policy. Records numbers, decides nothing.
+policies: [stretch, crop, native]
+modalities: [rgb, thermal]
+clip_set: flir_test_fs5_c4f6_cs10
+device: auto              # auto -> cuda if available, else cpu
