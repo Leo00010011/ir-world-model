@@ -16,9 +16,10 @@ This file lists every technology choice, where code lives, and the rules all fea
 | Cluster | **SLURM** through `hydra-submitit-launcher` plus plain `sbatch` templates in `slurm/` | See §5 |
 | Feature storage | **HDF5** (`h5py`) | See §4 |
 | Detection metrics | `pycocotools` (COCO eval), with our own wrapper for the 6-class label space with ignore regions (F2), per-horizon breakdown and bootstrap CIs | |
-| Testing | `pytest` | Run locally with `py -m pytest tests/...` (Windows) or `uv run pytest` |
+| Testing | `pytest` | Run locally with `py -m pytest tests/...` (Windows) or `uv run pytest`. `-m data` tests are **slow on the cluster** (§7) |
 | Local OS | Windows 11 (development) | Code must be path-agnostic (`pathlib`) and must not assume POSIX-only tools |
 | Cluster OS | Linux + SLURM | |
+| Worst-case GPU | **NVIDIA L4 (24 GB)** (ctcomp3 node hpc-gpu5) | Batch sizes, epochs and memory must fit it (user decision, F4). F4 measured the encoder at 17 frames/s (448×896) and 36 frames/s (448×560) in fp16; a 448×896 batch of 64 does not fit |
 
 ### 1.1 Installing on the external server
 - uv needs no admin rights. Install it in user space with `pip install --user uv` (or the official standalone installer, which writes to `~/.local/bin`).
@@ -48,7 +49,7 @@ ir-world-model/
 │   ├── data_stats/             # F2: FLIR dataset statistics / class-imbalance report
 │   ├── clip_index/             # F3: build the committed video clip set + count report
 │   ├── dinof_audit/            # F1: download/pin DINO-Foresight artefacts, audit the reference code
-│   ├── feature_extraction/     # build the DINOv2 caches
+│   ├── feature_extraction/     # F4: R5 probe + encoder throughput; F5 cache if built
 │   │   ├── conf/               # Hydra configs
 │   │   └── *.py                # @hydra.main entry points
 │   ├── detection/              # train/eval DINO-DETR heads on cached features
@@ -76,10 +77,11 @@ Rules:
 ### 3.1 Encoder: DINOv2 (frozen)
 Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed by the F1 audit (`spec/2026-10-02-dino-foresight-audit/audit.md`).
 - Backbone **DINOv2-Reg ViT-B/14** (`vitb14_reg`), frozen, `eval()`, no grad. Weights are the official `dinov2_vitb14_reg4_pretrain.pth`, bit-identical to the copy inside the DINO-Foresight checkpoint *(F1)*. The model is built from the DINOv2 hub code **pinned to `dinof_release` (`85a24602`)**, because the reference loads the unpinned `main` at runtime *(F1)*. Paths come from `irwm.worldmodel.assets` and env vars (§6).
-- Input **448×896** (32×64 patch tokens), the size of the high-res checkpoint. ImageNet mean/std normalisation. How FLIR's 5:4 frames are mapped to the model input (stretch, crop, native grid or two windows) is **still open**. It is decided before F8 (detector training), from the F1 probe plus a FLIR check (Roadmap R5). Until then the encoder (F4) must take the policy as a config parameter, not hard-code it. Below, the token grid is written `H'×W'` (default 32×64).
+- Input **448×896** (32×64 patch tokens), the size of the high-res checkpoint. ImageNet mean/std normalisation. How FLIR's 5:4 frames are mapped to the model input is **still open** (Roadmap R5, decided by the user before F8). F4 implements three policies, chosen by `encoder.policy` (`irwm.features.preprocess`): `stretch` (whole frame → 448×896, exactly the reference transform), `crop` (centre 2:1 band → 448×896) and `native` (centre 5:4 crop → 448×560, 32×40 tokens; thermal is never cropped). Only deterministic centre crops; training augmentation belongs to F8. The F4 FLIR probe numbers are in R5. Below, the token grid is written `H'×W'` (default 32×64).
 - **Features = channel concatenation of the patch-token outputs of blocks 3, 6, 9, 12** (1-indexed; `d_layers 2,5,8,11` in the reference code) → **3072-d**. The CLS token and the 4 register tokens are dropped (2053 → 2048 tokens). **The final LayerNorm is applied to every one of the four blocks** (DINOv2 `get_intermediate_layers` default `norm=True`) *(F1)*.
 - **PCA:** DINO-Foresight's released PCA (`dinov2_pca_448_l[2_5_8_11]_1152.pth`, fit on Cityscapes train) reduces 3072 → **1152-d**. Applied as: standardise each dim by the stored `mean`/`std`, subtract `pca_mean`, then project on `components`. **No whitening** *(F1)*. Implemented in pure torch by `irwm.features.pca.PCABasis` (equal to the reference, |Δ| = 0). This is the space the world model reads and writes. The PCA is part of the frozen encoder and is never re-fit outside Phase 4.
-- **Thermal frames** are single-channel and get **replicated to 3 channels** before normalisation. This choice is written down because it affects every IR result.
+- **Thermal frames** are single-channel and get **replicated to 3 channels** before normalisation. This choice is written down because it affects every IR result. ImageNet normalisation is kept for thermal (F4 measured it to be no further from DINOv2's input distribution than FLIR RGB; Roadmap R4).
+- **Implementation *(F4)*:** `irwm.features.encoder.DinoV2RegEncoder` equals the reference extraction with |Δ| = 0 in fp32 and in fp16 autocast. Default precision is fp16 autocast over backbone **and** PCA (as `16-mixed`); outputs are cast to fp32. Encoding runs under `torch.no_grad()` (not `inference_mode`), and the module stays in eval even when Lightning calls `.train()`. The pinned hub code runs plain attention (no xFormers): this is what the reference runs, so it is kept for exactness, but it is also why encoding is slow and memory-hungry (F4: ≈ 10 min of encoding per epoch per modality on an L4 at 448×896).
 
 ### 3.2 Detector: DINO-DETR head (ported)
 - DINO-DETR (Zhang et al., 2022) is reimplemented or vendored as a plain `nn.Module` in `irwm/detection/`. There is **no detectron2/detrex runtime dependency**. (DINO-Foresight reports instance segmentation with Mask2Former, but FLIR has boxes only, so we use a box detector.)
@@ -119,7 +121,7 @@ teledyne_flir_adas_v2/
 `image_id` is unique only within one (modality, split); lookups go through `FlirSplit`. The 16-bit `analyticsData` TIFFs are not used.
 
 ### 4.2 Feature cache (HDF5)
-Location: `$IRWM_CACHE_ROOT/features/<encoder_tag>/<modality>/<split>.h5`, where `encoder_tag = dinov2_vitb14reg_448x896_l3-6-9-12_pca1152` (the resolution part changes if F1 picks another policy).
+Location: `$IRWM_CACHE_ROOT/features/<encoder_tag>/<modality>/<split>.h5`, where `encoder_tag = dinov2_vitb14reg_448x896_l3-6-9-12_pca1152` (`irwm.features.encoder.encoder_tag(policy)`: `…_448x896crop_…` for `crop`, `…_448x560_…` for `native`).
 
 Size check: 32·64·1152 fp16 ≈ 4.7 MB per frame. With 30,787 frames (23,289 annotated image frames plus 7,498 video frames, F2), the total is about **145 GB**. Full 3072-d features would be about 390 GB, so they are **not** cached by default. They are encoded on the fly for the PCA-loss analysis on a subset (Roadmap R7).
 
@@ -166,6 +168,7 @@ Hydra configs read these through `${oc.env:IRWM_CACHE_ROOT}`. A local `.env` (gi
 - Seeds come from Hydra config and are set through `lightning.seed_everything`. World-model inference is deterministic. The adapter sets `torch.backends.cudnn.deterministic` where it matters.
 - Every eval writes a machine-readable JSON (metrics + config + git commit) next to its W&B log.
 - Tests use tiny synthetic data, run on CPU in under a minute, and do not need the real dataset, cached weights or GPUs. Tests that need real data are marked `@pytest.mark.data` and skipped by default.
+- **`data` tests are slow on the cluster, so budget for it** *(F4, Roadmap R11)*. On ctcomp3 the read-only FLIR tests take **≈ 3 min** (174 s, against 9 s on ctdesk236 with the same code and data) and the encoder equivalence tests **≈ 1.5 min** (92 s), almost all of it loading from the shared filesystem (JSON parsing, the full DINO-Foresight checkpoint, backbone builds). Run them once per change inside a GPU allocation (`srun --gres=gpu:1 …`), not in a loop, and do not take a slow run as a hang. The same startup cost hits every cluster job once per process (not per epoch).
 
 ## 8. Component Registry
 Updated by every feature when it is marked done. Status: ☐ planned · ◐ in progress · ✓ done.
@@ -187,7 +190,12 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Stats notebook | `notebooks/flir_stats.ipynb` | F2 | ✓ |
 | Video clip index: `ClipIndex`, `Clip`, `check_pairing`, `find_segments`, `build_clip_index`, `dump_clip_index`/`write_clip_index` (never overwrites a differing file), `summarise` | `lib/irwm/data/clips.py` | F3 | ✓ |
 | Committed clip set `flir_test_fs5_c4f6_cs10` (330 clips, 304 evaluable; shared RGB/thermal rows) + builder entry point | `lib/irwm/data/clip_sets/`, `projects/clip_index/` | F3 | ✓ (ctdesk236) |
-| DINOv2 encoder wrapper + PCA | `lib/irwm/features/encoder.py` | F4 | ☐ |
+| Preprocessing: `Preprocess`, `ResizeGeometry`, `POLICY_SIZE` (stretch/crop/native centre crops, thermal 1→3, ImageNet norm, box mapping) | `lib/irwm/features/preprocess.py` | F4 | ✓ |
+| `DinoV2RegEncoder` (DINOv2-Reg + PCA, frozen, fp16 autocast; `encode_full`/`encode_pca`/`pca_inverse`), `encoder_tag` | `lib/irwm/features/encoder.py` | F4 | ✓ (equals the reference, \|Δ\| = 0, L4) |
+| Shared Hydra group `encoder` (`policy`, `precision`, `hub_version`) | `lib/irwm/conf/encoder/default.yaml` | F4 | ✓ |
+| Shared reference helpers `one_step`, `pca_metrics` (moved from the audit) | `lib/irwm/worldmodel/reference.py` | F4 | ✓ |
+| Feature-extraction project: `r5_probe.py` (R5 FLIR probe), `throughput.py` | `projects/feature_extraction/` | F4 | ✓ (hpc-gpu5, L4) |
+| Encoder/R5 results notebook | `notebooks/encoder_r5_results.ipynb` | F4 | ✓ |
 | HDF5 feature cache | `lib/irwm/features/cache.py` | F5 | ☐ |
 | DINO-DETR head | `lib/irwm/detection/` | F7 | ☐ |
 | COCO evaluator (6-class AP/AP50 with ignore regions, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |

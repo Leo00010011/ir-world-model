@@ -43,23 +43,23 @@
 
 ### Group 5 — Equivalence with real weights (`@pytest.mark.data`, run on ctcomp3 GPU)
 All three tests use the same `[5, 3, 448, 896]` demo tensor from `load_demo_frames((448, 896))`, as one unsplit batch, on the same GPU (FR8 table).
-- [ ] **Test A, fp32 full features:** our `precision="fp32"` `encode_full` vs reference `Dino_f.extract_features` with no autocast, reshaped to `[5, 32, 64, 3072]` → max |Δ| = 0.
-- [ ] **Test A, fp32 PCA features:** our `precision="fp32"` `encode_pca` vs reference `pca_transform(extract_features(...))` with no autocast → max |Δ| = 0.
-- [ ] **Test B, fp16 full and PCA features:** our `precision="fp16"` `encode_full`/`encode_pca` vs the same reference calls inside `torch.autocast("cuda", torch.float16)` → max |Δ| = 0. If not 0, max |Δ| ≤ 1e-2 **and** `results.md` names the differing op (user decision).
-- [ ] **Test C, fp16 drift (information only):** our fp16 vs our fp32 `encode_pca` → max/mean |Δ| and the mean token cosine are printed and copied to `results.md`. No threshold.
-- [ ] **Native grid end-to-end:** a thermal 640×512 synthetic frame through `Preprocess("native", "thermal")` → `encode_pca` → `[1, 32, 40, 1152]`, all finite. This exercises DINOv2-Reg's own positional-embedding interpolation on a real backbone.
-- [ ] **Assets offline:** `DinoV2RegEncoder.from_assets()` succeeds inside the Step 9 jobs on a ctcomp3 compute node. The hub load uses `source="local"` with `pretrained=False`, and the weights come from `dinov2_weights_path()`, so no download is attempted. `enc.pca.sha256` is non-empty.
-- [ ] **Register variant:** the loaded backbone has `num_register_tokens == 4` and `embed_dim == 768`. A 448×896 forward of `get_intermediate_layers` gives 2048 tokens per block.
+- [x] **Test A, fp32 full features:** our `precision="fp32"` `encode_full` vs reference `Dino_f.extract_features` with no autocast, reshaped to `[5, 32, 64, 3072]` → max |Δ| = 0.
+- [x] **Test A, fp32 PCA features:** our `precision="fp32"` `encode_pca` vs reference `pca_transform(extract_features(...))` with no autocast → max |Δ| = 0.
+- [x] **Test B, fp16 full and PCA features:** our `precision="fp16"` `encode_full`/`encode_pca` vs the same reference calls inside `torch.autocast("cuda", torch.float16)` → max |Δ| = 0. If not 0, max |Δ| ≤ 1e-2 **and** `results.md` names the differing op (user decision).
+- [x] **Test C, fp16 drift (information only):** our fp16 vs our fp32 `encode_pca` → max/mean |Δ| and the mean token cosine are printed and copied to `results.md`. No threshold.
+- [x] **Native grid end-to-end:** a thermal 640×512 synthetic frame through `Preprocess("native", "thermal")` → `encode_pca` → `[1, 32, 40, 1152]`, all finite. This exercises DINOv2-Reg's own positional-embedding interpolation on a real backbone.
+- [x] **Assets offline:** `DinoV2RegEncoder.from_assets()` succeeds inside the Step 9 jobs on a ctcomp3 compute node. The hub load uses `source="local"` with `pretrained=False`, and the weights come from `dinov2_weights_path()`, so no download is attempted. `enc.pca.sha256` is non-empty.
+- [x] **Register variant:** the loaded backbone has `num_register_tokens == 4` and `embed_dim == 768`. A 448×896 forward of `get_intermediate_layers` gives 2048 tokens per block.
 
 ## Data Validity (`r5_probe.json`, `throughput.json`, pytest output from ctcomp3)
 
-- [ ] **Encoder drift, Test C:** `results.md` records the Test C numbers. Expected mean cosine ≥ 0.999. This is informational and not a gate, because fp16 is the reference behaviour.
-- [ ] **Probe completeness:** `r5_probe.json` holds 330 clips × 2 modalities × 3 policies = **1980** per-clip rows, all with finite metrics, and `n_clips == 330` in each of the 6 summaries.
-- [ ] **Probe sanity:** for every (modality, policy), the model beats copy-last on average (mean ratio < 1.0). If any is ≥ 1.0, report it prominently in `results.md`. It is a finding for R5/R9, not a bug to hide, but check first that the encoder input really is the `Preprocess` output for that modality.
-- [ ] **Probe grid:** the per-clip `x` grid is `32×64` for `stretch`/`crop` and `32×40` for `native` (recorded in the JSON).
-- [ ] **Throughput, GPU-only:** `throughput.json` has frames/s for 2 sizes × 2 precisions × 3 batch sizes = 12 entries (`"oom"` allowed only for fp32 at B = 64). Expected: fp16 frames/s > fp32 at B = 16 for both sizes.
-- [ ] **Throughput, end-to-end:** frames/s, encode share and projected epoch seconds for RGB train (10318 frames) and thermal train (10742 frames) are recorded in `results.md`. If the encode share is < 50 %, the note says that data loading, not encoding, is the bottleneck for F8.
-- [ ] **Results note:** `results.md` contains all of the following:
+- [x] **Encoder drift, Test C:** `results.md` records the Test C numbers. Expected mean cosine ≥ 0.999. This is informational and not a gate, because fp16 is the reference behaviour.
+- [x] **Probe completeness:** `r5_probe.json` holds 330 clips × 2 modalities × 3 policies = **1980** per-clip rows, all with finite metrics, and `n_clips == 330` in each of the 6 summaries.
+- [x] **Probe sanity:** for every (modality, policy), the model beats copy-last on average (mean ratio < 1.0). If any is ≥ 1.0, report it prominently in `results.md`. It is a finding for R5/R9, not a bug to hide, but check first that the encoder input really is the `Preprocess` output for that modality.
+- [x] **Probe grid:** the per-clip `x` grid is `32×64` for `stretch`/`crop` and `32×40` for `native` (recorded in the JSON).
+- [ ] *(failed, user decision 2026-10-19: on the 24 GB NVIDIA L4, fp16 at 448×896 B = 64 also ran out of memory (`throughput.json` → `gpu_only`); the other conditions hold: 12 entries, fp16 > fp32 at B = 16 for both sizes. Kept as a failed item, not accepted, because the project must not depend on larger GPUs: the L4 is the worst case to plan for. See results.md §3 and plan Amendments.)* **Throughput, GPU-only:** `throughput.json` has frames/s for 2 sizes × 2 precisions × 3 batch sizes = 12 entries (`"oom"` allowed only for fp32 at B = 64). Expected: fp16 frames/s > fp32 at B = 16 for both sizes.
+- [x] **Throughput, end-to-end:** frames/s, encode share and projected epoch seconds for RGB train (10318 frames) and thermal train (10742 frames) are recorded in `results.md`. If the encode share is < 50 %, the note says that data loading, not encoding, is the bottleneck for F8.
+- [x] **Results note:** `results.md` contains all of the following:
   - the FR8 numbers;
   - both throughput tables;
   - the probe table (mean, median and summed ratio per modality × policy);
@@ -71,7 +71,7 @@ All three tests use the same `[5, 3, 448, 896]` demo tensor from `load_demo_fram
 
 ## Data Architecture Integrity
 - [ ] **Submodule untouched:** `git -C third_party/DINO-Foresight status --porcelain` is empty after all runs.
-- [ ] **Determinism:** `encode_pca` run twice on the same demo batch (GPU, fp16) → |Δ| = 0.
-- [ ] **Provenance:** both JSONs record the git commit (clean tree), the resolved config, the GPU name and the `encoder_tag`s. `r5_probe.json` also records the clip-set SHA-256, which equals the one pinned in `tests/test_clip_index.py`.
-- [ ] **Allowed paths only:** the runs write only under `$IRWM_OUTPUT_ROOT/feature_extraction/` and W&B. Nothing is written under `$IRWM_DATA_ROOT`, `$IRWM_CKPT_ROOT` or `$IRWM_CACHE_ROOT`. A grep of `lib/irwm/features/` and `projects/feature_extraction/` finds no absolute paths (TechStack §6).
-- [ ] **Naming:** the new code, configs and `results.md` call the backbone "DINOv2-Reg" / `vitb14_reg`, never plain ViT-B/14 (`grep -n "vitb14[^_]"` on the new files finds nothing).
+- [x] **Determinism:** `encode_pca` run twice on the same demo batch (GPU, fp16) → |Δ| = 0.
+- [x] **Provenance:** both JSONs record the git commit (clean tree), the resolved config, the GPU name and the `encoder_tag`s. `r5_probe.json` also records the clip-set SHA-256, which equals the one pinned in `tests/test_clip_index.py`.
+- [x] **Allowed paths only:** the runs write only under `$IRWM_OUTPUT_ROOT/feature_extraction/` and W&B. Nothing is written under `$IRWM_DATA_ROOT`, `$IRWM_CKPT_ROOT` or `$IRWM_CACHE_ROOT`. A grep of `lib/irwm/features/` and `projects/feature_extraction/` finds no absolute paths (TechStack §6).
+- [x] **Naming:** the new code, configs and `results.md` call the backbone "DINOv2-Reg" / `vitb14_reg`, never plain ViT-B/14 (`grep -n "vitb14[^_]"` on the new files finds nothing).
