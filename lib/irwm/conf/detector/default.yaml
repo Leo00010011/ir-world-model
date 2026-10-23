@@ -1,0 +1,7 @@
+# DINO-DETR head on frozen features (irwm.detection.DINODetector, F7;
+# spec/2026-10-23-dino-detr-head-port). Every detrex hyperparameter comes from detrex's own
+# projects/dino/configs/models/dino_vitdet.py and is changed only through `overrides`.
+in_channels: 1152   # F4 PCA coefficients (TechStack §3.1); 3072 for full features (TechStack §3.2)
+stem_dim: 768       # FeatureStem output = ViTDet-B embed_dim (dino_vitdet.py:12), plan.md D1
+num_classes: 6      # irwm.data.classes.CLASS_NAMES (TechStack §3.4), plan.md D2
+overrides: {}       # dotted keys relative to detrex's `model`, e.g. {transformer.encoder.num_layers: 2}

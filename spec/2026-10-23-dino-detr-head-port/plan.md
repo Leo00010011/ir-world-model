@@ -194,3 +194,6 @@ Covers: FR11.
 8. Step 8 — Head benchmark entry point (check locally that it exits non-zero with a clear message without CUDA ops)
 9. Step 9 — CUDA build and GPU runs on ctcomp3 (user)
 10. Step 10 — Results note and constitution updates
+
+## Amendments
+- **2026-10-23 — Group 6 GIoU expectation is analytic, not ≈ 0** (user decision). The criterion test on perfect matched outputs gave `loss_giou = 4.17e-5`, not 0 within atol 1e-6. Cause: detrex's stock `box_iou` divides by `union + 1e-6` (`detrex/layers/box_ops.py:81`), so a perfect box with normalised area A keeps a GIoU loss of `1e-6/(A+1e-6)`, and no normalised box is large enough to push it under 1e-6. The test now asserts `loss_giou == mean(1e-6/(A_i+1e-6))` (rtol 1e-3); `loss_bbox` keeps atol 1e-6. Changed: validation.md Group 6, third item. No FR or step changed.

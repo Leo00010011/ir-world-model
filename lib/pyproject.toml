@@ -16,6 +16,11 @@ dependencies = [
     "python-dotenv>=1.0",
     # JPEG decoding in irwm.data (also pulled in by torchvision).
     "pillow>=10",
+    # DINO-DETR head (F7): detrex's DINO run from the pinned submodule third_party/detrex.
+    "detectron2",
+    "detrex",
+    # detrex/config/config.py:18 imports pkg_resources, which setuptools>=81 removed.
+    "setuptools<81",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,17 @@
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detection
+
+# DINO-DETR head train-step cost on the GPU (spec/2026-10-23-dino-detr-head-port, FR10).
+grids: [[32, 64], [32, 40]]     # (H', W') tokens: stretch/crop and native policies
+batch_sizes: [1, 2, 4, 8]
+precisions: [fp32, fp16]        # fp16 = CUDA autocast
+warmup: 3
+timed: 10
+in_channels: ${detector.in_channels}

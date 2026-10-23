@@ -61,7 +61,21 @@ fi
 
 # 4. Environment ------------------------------------------------------------------------------------
 step "uv sync --frozen (Python 3.11 + torch cu121 from uv.lock)"
-uv sync --frozen
+# Two phases: detectron2/detrex build without isolation against the installed torch (F7).
+uv sync --frozen --no-install-package detectron2 --no-install-package detrex
+reinstall=()
+if command -v nvcc >/dev/null 2>&1; then
+    # Login nodes have no GPU, so force the CUDA ops (detrex setup.py:106-109); archs: V100S, L4, others.
+    export FORCE_CUDA=1
+    export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9+PTX"
+    reinstall=(--reinstall-package detectron2 --reinstall-package detrex)
+    echo "  building detectron2/detrex CUDA ops: $(nvcc --version | tail -1) | $(gcc --version | head -1)"
+else
+    warn "nvcc not found: detectron2/detrex get CPU-only ops, so GPU training will fail (load a CUDA 12.x module and re-run)"
+fi
+build_start=${SECONDS}
+uv sync --frozen ${reinstall[@]+"${reinstall[@]}"}  # empty-array safe under set -u
+echo "  phase-2 sync (detectron2/detrex build): $((SECONDS - build_start)) s"
 
 # 5. Paths ------------------------------------------------------------------------------------------
 step "IRWM_* paths"
@@ -81,6 +95,9 @@ uv run --frozen python - <<'PY'
 import sys, torch, numpy, lightning, hydra, irwm
 print(f"  python {sys.version.split()[0]} | torch {torch.__version__} (CUDA build {torch.version.cuda}) "
       f"| numpy {numpy.__version__} | lightning {lightning.__version__} | hydra {hydra.__version__}")
+import detectron2, detrex
+from detrex import _C
+print(f"  detectron2 {detectron2.__version__} | detrex _C ops: {_C.__file__}")
 if torch.cuda.is_available():
     print(f"  CUDA available: {torch.cuda.device_count()} x {torch.cuda.get_device_name(0)}")
 else:
