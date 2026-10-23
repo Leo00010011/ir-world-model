@@ -180,7 +180,7 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | SLURM helpers (`on_slurm`, `cluster_plugins`, `resume_ckpt_path`, `sbatch_args`; CLI `python -m irwm.utils.slurm <site>`) | `lib/irwm/utils/slurm.py` | F0 | ✓ |
 | Shared Hydra groups (`irwm_base`, `paths`, `cluster/{local,slurm}`, `wandb`) | `lib/irwm/conf/` (`pkg://irwm.conf`) | F0 | ✓ |
 | Smoke project (Hydra + Lightning + W&B + requeue health check) | `projects/smoke/` | F0 | ✓ |
-| Cluster scripts: `setup_env.sh` (per-cluster env bootstrap), `submit.sh` (site config → sbatch), `job.sbatch`, `env.sh` (.env + W&B key file) | `slurm/` | F0 | ✓ |
+| Cluster scripts: `setup_env.sh` (per-cluster env bootstrap), `submit.sh` (site config → sbatch), `job.sbatch`, `env.sh` (.env + W&B key file), `stage_data.sh` (copy FLIR to `$LOCAL_SCRATCH`, repoint `IRWM_DATA_ROOT`; R11) | `slurm/` | F0 | ✓ |
 | Per-cluster site configs (template `example_site.yaml`; sites: `ctcomp3`) | `lib/irwm/conf/cluster/<site>.yaml` | F0 | ✓ |
 | DINO-Foresight submodule @ `d98f765` | `third_party/DINO-Foresight` | F0 | ✓ |
 | FLIR ADAS v2 readers: `FlirSplit`, `FlirRecord`, `FlirImageDataset`, `to_coco_gt` (ignore regions as crowd GT), `load_rgb_thermal_map`, `video_tags` | `lib/irwm/data/flir.py` | F2 | ✓ |
