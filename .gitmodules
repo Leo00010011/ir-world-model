@@ -1,3 +1,6 @@
 [submodule "third_party/DINO-Foresight"]
 	path = third_party/DINO-Foresight
 	url = https://github.com/Sta8is/DINO-Foresight.git
+[submodule "third_party/detrex"]
+	path = third_party/detrex
+	url = https://github.com/IDEA-Research/detrex.git
