@@ -112,8 +112,26 @@ A SLURM-friendly, resumable job that encodes every frame (train, val, video test
 **Current focus: F7 and F8.** The goal of this phase in the current milestone is a DINO-DETR detector that takes DINOv2-Reg features as input and is trained on FLIR, one per modality. Rigorous evaluation (F6) and the H1 comparison (F9) come after it. Execution order: **F7 → F8**, then F6 → F9.
 
 ### F7 · DINO-DETR head port ☐ (current focus)
-DINO-DETR as a plain `nn.Module` on `[B, C, H', W']` features (C = 1152 PCA channels by default, configurable so 3072-d full features can be tried; see TechStack §3.2): input projection, deformable transformer encoder/decoder, query selection, denoising queries, Hungarian matcher and criterion, plus box post-processing to `(boxes, scores, labels)` in image pixels. Single-scale input (one `H'×W'` map, default 32×64); whether to synthesise extra scales (e.g. strided convs, as in ViTDet's simple feature pyramid) is decided in the spec. Architecture hyperparameters are copied from the detrex reference config. No detectron2/detrex runtime dependency.
-**Done when:** unit tests cover shapes, matcher and loss on CPU; the head overfits a tiny synthetic set (loss → ~0, predicted boxes match GT); the hyperparameters are listed next to the detrex config they come from.
+> **2026-10-23: the reference is FlowWM's detector.** FlowWM ([`facebookresearch/Flow-World-Models`](https://github.com/facebookresearch/Flow-World-Models) @ `c150625`, arXiv:2606.29059 §5.1) runs DINO-DETR from **detrex** (`projects/dino`, Apache-2.0) on frozen DINOv3 features. Its trainer loads a detectron2 `LazyConfig` (`detrex/projects/dino/configs/models/dino_vitdet_dinov3_multi_layer_pooler_512_w_layer_norm.py`) and calls `detector(batch, inference_from_backbone=True)`, so the world-model latents `[D, H, W]` go straight into the detector's neck and skip the image backbone. That config, the backbone modification and the detector checkpoints are **not released**: the repo only imports detectron2/detrex lazily. The name and the paper ("average pool token features from layers 3, 6, 9, 12") suggest a multi-layer pooling stem with LayerNorm in front of detrex's stock **`dino_vitdet`** model. We have no source for that stem, so this reading is our inference. **We follow the same route.** We reuse detrex's DINO + ViTDet code as closely as we can. Our frozen F4 features take the place of the ViT backbone output, and we keep the rest of the model and its hyperparameters as they are.
+
+**Goal:** port detrex's `dino_vitdet` model (`projects/dino/configs/models/dino_vitdet.py` on top of `dino_r50.py`, detrex @ `e244e6c`) into `irwm/detection/` as a plain `nn.Module` that takes our features `[B, C, H', W']` in place of the ViT `last_feat`. C = 1152 PCA channels by default. It is configurable, so 3072-d full features can be tried (TechStack §3.2). Default grid 32×64. The port keeps these parts of detrex:
+- **ViTDet simple feature pyramid** on the single map: scale factors (2, 1, ½) plus a max-pool top level, so 4 levels of 256 channels with LayerNorm. This settles the multi-scale question.
+- **`ChannelMapper` neck**, sine position embedding, and the **DINO transformer**: deformable encoder and decoder, 6 + 6 layers, 256-d, 8 heads, FFN 2048, 4 feature levels, two-stage query selection, 900 queries.
+- **Contrastive denoising**: 100 dn queries, label noise 0.5, box noise 1.0.
+- **Hungarian matcher and `DINOCriterion`**: focal loss (α 0.25, γ 2), costs and weights class 2 / L1 5 / GIoU 2 (loss class weight 1), with auxiliary and encoder losses.
+- **Inference post-processing**: top-k over sigmoid scores, giving `(boxes, scores, labels)` in encoder-input pixels. F8 maps them back to FLIR pixels with `ResizeGeometry.invert_boxes`.
+
+The training schedule comes from `dino_vitdet_base_4scale_{12,50}ep.py` and belongs to F8. There is **no detectron2/detrex runtime dependency**: we vendor or rewrite the code, keep detrex's module structure and parameter names, and pin the commit. **Decided in the spec:**
+- the input stem in front of the pyramid (FlowWM's "pooler with LayerNorm" is unreleased; ours could be LayerNorm + a linear projection from C)
+- the multi-scale deformable attention implementation (detrex's CUDA op or its pure-PyTorch fallback)
+- how to replace detrex's `square_pad=1024`, since our grid is not square
+- whether to check numerical equivalence against a detrex install with shared weights, or only match the config line by line
+
+**Done when:**
+- unit tests cover shapes, matcher and loss on CPU
+- the head overfits a tiny synthetic set (loss → ~0, predicted boxes match GT)
+- every hyperparameter is listed next to the detrex config line it comes from, and every deviation from detrex or FlowWM is written down with its reason
+
 **Depends on:** F0.
 
 ### F8 · Detector training pipeline ☐ (current focus)
