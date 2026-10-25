@@ -8,7 +8,7 @@ All scripts work from any working directory inside the clone. Login nodes need i
 | `submit.sh` | `slurm/submit.sh <site> <entry.py> [overrides]` | Single job. Derives the sbatch flags from `lib/irwm/conf/cluster/<site>.yaml` (the only place resources are defined) and writes logs to `$IRWM_OUTPUT_ROOT/slurm_logs/`. |
 | `job.sbatch` | (called by `submit.sh`) | Sources `env.sh`, prints job/GPU info, then runs `srun uv run --frozen python <entry.py> ...`. |
 | `env.sh` | `source slurm/env.sh` | Shared env: adds `~/.local/bin` to PATH, loads `.env`, and exports `WANDB_API_KEY` from `$WANDB_API_KEY_FILE` (default `~/.wandb_api_key`). Never overrides variables that are already set. |
-| `stage_data.sh` | `source slurm/stage_data.sh` inside a job, after `env.sh` | Copies FLIR to node-local `$LOCAL_SCRATCH/irwm_data/` (12 GB in about 4.6 min on ctcomp3), checks the file count and points `IRWM_DATA_ROOT` at the copy. Scratch is wiped when the job ends: never write results there. `stage_data_test.sbatch` is the R11 timing experiment. |
+| `stage_data.sh` | `source slurm/stage_data.sh` inside a job, after `env.sh` | Copies FLIR to node-local `$LOCAL_SCRATCH/irwm_data/` (12 GB in about 4.6 min on ctcomp3), checks the file count and points `IRWM_DATA_ROOT` at the copy. Scratch is wiped when the job ends: never write results there. `stage_data_test.sbatch` is the R11 timing experiment. `IRWM_STAGE_DATA=1 slurm/submit.sh ...` makes `job.sbatch` do this before the entry point runs. |
 
 ## Adding a cluster
 1. `cp lib/irwm/conf/cluster/example_site.yaml lib/irwm/conf/cluster/<site>.yaml`, then set `name`, `partition`, `account`, `qos` and `gres` (and anything else from `cluster/slurm.yaml`). Commit it.

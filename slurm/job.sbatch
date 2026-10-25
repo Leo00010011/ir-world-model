@@ -26,6 +26,11 @@ echo "[irwm] git $(git rev-parse --short HEAD 2>/dev/null || echo unknown) | cmd
 echo "[irwm] W&B key: $([[ -n "${WANDB_API_KEY:-}" ]] && echo present || echo MISSING) | WANDB_MODE=${WANDB_MODE:-online}"
 command -v nvidia-smi >/dev/null && nvidia-smi -L || echo "[irwm] nvidia-smi not found"
 
+# IRWM_STAGE_DATA=1 (exported at submit time): copy FLIR to node-local scratch first (R11).
+if [[ "${IRWM_STAGE_DATA:-0}" == "1" ]]; then
+    source slurm/stage_data.sh
+fi
+
 # srun so Lightning sees one task per GPU. IRWM_NO_UV_RUN=1 skips `uv run` (no lockfile/network
 # access at all) on nodes where the env was built beforehand with slurm/setup_env.sh.
 if [[ "${IRWM_NO_UV_RUN:-0}" == "1" ]]; then

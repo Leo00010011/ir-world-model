@@ -11,9 +11,12 @@ project: feature_extraction
 # Encoder throughput on the GPU (spec/2026-10-16-dinov2-reg-encoder-wrapper, FR12).
 policy: ${encoder.policy}                       # end-to-end part only
 num_workers: ${oc.env:SLURM_CPUS_PER_TASK,8}
-batch_sizes: [1, 16, 64]
+attentions: [plain, sdpa]                       # plain = reference (bit-exact); sdpa = fused kernels
+run_gpu_only: true                              # false: only fidelity + end-to-end + loader-only
+batch_sizes: [1, 16, 32, 64]
 sizes: [[448, 896], [448, 560]]                 # (H, W): stretch/crop and native grids
 precisions: [fp16, fp32]
 e2e_batch_size: 32
 e2e_warmup: 10
-e2e_batches: 100
+e2e_batches: 100                                # per attention, each on its own slice of the split
+loader_batches: 60                              # loader-only, on the slice after the e2e ones

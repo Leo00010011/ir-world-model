@@ -18,10 +18,12 @@ head can consume the outputs). Spec: spec/2026-10-16-dinov2-reg-encoder-wrapper 
 from __future__ import annotations
 
 import contextlib
+import types
 import warnings
 from typing import ContextManager, Literal
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 
 from irwm.features.pca import PCABasis
@@ -38,6 +40,50 @@ def encoder_tag(policy: Policy) -> str:
     if policy not in _TAG_RES:
         raise ValueError(f"Unknown policy {policy!r}; expected one of {list(_TAG_RES)}")
     return f"dinov2_vitb14reg_{_TAG_RES[policy]}_l3-6-9-12_pca1152"
+
+
+AttentionImpl = Literal["plain", "sdpa"]
+
+
+def _sdpa_forward(self: nn.Module, x: Tensor, attn_bias: object = None) -> Tensor:
+    """DINOv2 ``Attention.forward`` with the score matrix replaced by ``F.scaled_dot_product_attention``.
+
+    Same maths as ``dinov2/layers/attention.py`` (``Attention.forward``) at ``dinof_release``; the
+    default SDPA scale is ``head_dim**-0.5``, which ``set_attention`` checks equals ``self.scale``.
+    """
+    if attn_bias is not None:
+        raise AssertionError("attn_bias (nested tensors) needs xFormers")
+    B, N, C = x.shape
+    qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+    out = F.scaled_dot_product_attention(qkv[0], qkv[1], qkv[2],
+                                         dropout_p=self.attn_drop.p if self.training else 0.0)
+    return self.proj_drop(self.proj(out.transpose(1, 2).reshape(B, N, C)))
+
+
+def set_attention(backbone: nn.Module, impl: AttentionImpl) -> int:
+    """Switch every DINOv2 attention layer of ``backbone`` to ``impl`` in place; returns the layer count.
+
+    ``"plain"`` is the hub code's own forward (what the reference runs, bit-exact, F4). ``"sdpa"``
+    uses PyTorch's fused kernels (FlashAttention / memory-efficient) instead of materialising the
+    N×N scores: faster and far less memory, but not bit-exact with the reference.
+    """
+    if impl not in ("plain", "sdpa"):
+        raise ValueError(f"Unknown attention {impl!r}; expected 'plain' or 'sdpa'")
+    n = 0
+    for m in backbone.modules():
+        if not all(hasattr(m, a) for a in ("qkv", "proj", "num_heads", "scale")):
+            continue
+        if impl == "sdpa":
+            head_dim = m.qkv.in_features // m.num_heads
+            if abs(m.scale - head_dim**-0.5) > 1e-9:
+                raise ValueError(f"attention scale {m.scale} != head_dim**-0.5; SDPA would differ")
+            m.forward = types.MethodType(_sdpa_forward, m)
+        else:
+            m.__dict__.pop("forward", None)  # back to the class's own forward
+        n += 1
+    if n == 0:
+        raise ValueError("no DINOv2 attention layers found in backbone")
+    return n
 
 
 class DinoV2RegEncoder(nn.Module):
