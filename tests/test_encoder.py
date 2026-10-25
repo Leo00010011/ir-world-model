@@ -302,7 +302,7 @@ class TestConfigAndRefactor:
 
         with initialize_config_module(config_module="irwm.conf", version_base="1.3"):
             cfg = compose("irwm_base")
-        assert OmegaConf.to_container(cfg.encoder) == {"policy": "stretch", "precision": "fp16",
+        assert OmegaConf.to_container(cfg.encoder) == {"policy": "native", "precision": "fp16",
                                                        "hub_version": "dinof_release"}
 
     def test_moved_helpers(self):
