@@ -70,7 +70,8 @@ requires-dist = [
     "packaging",
 ]
 
-# detrex: version from setup.py:34, requires-dist from third_party/detrex/requirements.txt.
+# detrex: version from setup.py:34, requires-dist from third_party/detrex/requirements.txt,
+# except opencv-python -> opencv-python-headless (same cv2; cluster nodes have no libGL.so.1).
 [[tool.uv.dependency-metadata]]
 name = "detrex"
 version = "0.3.0"
@@ -87,7 +88,7 @@ requires-dist = [
     "pytest",
     "scipy",
     "psutil",
-    "opencv-python",
+    "opencv-python-headless",
     "wandb",
     "submitit",
     "einops",
