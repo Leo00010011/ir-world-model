@@ -86,10 +86,11 @@ Out of scope:
 **FR10 — Head benchmark (`projects/detection/`).**
 - New uv workspace member `irwm-detection` (`projects/detection/pyproject.toml`, depends on `irwm`), registered in the root `[tool.uv.sources]`.
 - `projects/detection/head_bench.py` (Hydra, config `conf/head_bench.yaml`, `project: detection`) runs on synthetic features for every combination of:
-  - grid `[32, 64]` and `[32, 40]`;
+  - grid `[32, 40]` (native, R5) *(amended 2026-10-26: `[32, 64]` dropped from the defaults; still selectable with `grids=`)*;
   - batch size `1, 2, 4, 8`;
-  - precision `fp32` and `fp16` (CUDA autocast).
-- Each run does 3 warm-up and 10 timed train steps: forward, `sum(losses).backward()`, then `AdamW(lr=1e-4, weight_decay=1e-4)` step with grad clip `max_norm=0.1`.
+  - precision `fp32` and `fp16` (CUDA autocast);
+  - mode `train` and `infer` *(added 2026-10-26)*.
+- Each train run does 3 warm-up and 10 timed train steps: forward, `sum(losses).backward()`, then `AdamW(lr=1e-4, weight_decay=1e-4)` step with grad clip `max_norm=0.1`. Each infer run times eval-mode forwards under `no_grad`. `msda=pytorch` swaps detrex's compiled MSDA for its pure-PyTorch fallback at runtime (benchmark only; detrex unmodified) *(added 2026-10-26)*.
 - It writes `<run_dir>/head_bench.json` with, per combination: median step seconds, images/s, peak allocated GiB (`torch.cuda.max_memory_allocated`), and `"oom": true` when CUDA OOM is raised (caught, then the next combination runs). It also records `git_info()`, the GPU name and `cuda_ops_available()`, and logs to W&B. Without CUDA it exits with a non-zero status and a clear message.
 
 **FR11 — Results note (`spec/2026-10-23-dino-detr-head-port/results.md`).**

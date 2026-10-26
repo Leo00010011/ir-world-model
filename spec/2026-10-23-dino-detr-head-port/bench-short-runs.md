@@ -3,7 +3,7 @@
 Brief for the session that analyses the short runs. The overnight runs are in `bench-overnight-runs.md`.
 
 ## Why these benchmarks exist
-- **New thesis direction (user, 2026-10-25).** There is no time left to train a DINO detector on IR (F8 is not built). The thesis instead shows **measured performance optimisations** of the pipeline on the cluster's worst-case GPU, the NVIDIA L4 (ctcomp3 `hpc-gpu5`/`hpc-gpu6`, 2 × L4 each, 48 CPUs, 375 GB RAM).
+- **Pipeline efficiency (user, 2026-10-25).** The thesis goal is unchanged: measure the effect of domain shift on world models (Mission). Compute is limited, so these benchmarks measure **performance optimisations** of the pipeline on the cluster's worst-case GPU, the NVIDIA L4 (ctcomp3 `hpc-gpu5`/`hpc-gpu6`, 2 × L4 each, 48 CPUs, 375 GB RAM).
 - **The three optimisations measured:**
   1. **Data on node-local scratch vs. BeeGFS.** `IRWM_STAGE_DATA=1` makes `slurm/job.sbatch` source `slurm/stage_data.sh`. This builds on Roadmap R11.
   2. **Fused attention in the DINOv2 encoder.** `irwm.features.encoder.set_attention(backbone, "sdpa")` swaps the hub code's plain attention (explicit `q @ kᵀ → softmax → @ v`, which is what the encoder and DINO-Foresight's reference really run, since xFormers is not installed) for `F.scaled_dot_product_attention`, using torch 2.2's FlashAttention-2 / memory-efficient backends. Weights are unchanged. The output is not bit-exact; `fidelity` measures the difference.
@@ -27,12 +27,12 @@ These are crash checks before the overnight jobs. With 1–2 batches, **their ti
 
 There was also an earlier S2 run under the old defaults (448×896 and 448×560, `stretch` end to end). It only checked the code path.
 
-## Outputs (to fill in)
-- **S1:** pytest summary line. *(pending: user will paste)*
-- **S2:** console output and the `throughput.json` path.
-  - Key lines: `[throughput] fidelity {...}`, with `mean_token_cosine` expected ≥ 0.999 and `max_abs_diff` reported;
-  - `[throughput] e2e {...}` × 4 and `[throughput] loader {...}` × 2. *(pending)*
-- **S3:** console output and the `head_bench.json` path. *(pending)*
+## Outputs (filled in 2026-10-26)
+- **S1:** not pasted from the login node. Both files pass on ctdesk236 (37 passed, 2026-10-26).
+- **S2:** `outputs/feature_extraction/2026-10-25/13-09-29/throughput.json`. Every section ran.
+  - Fidelity (bit-identical in S2, A and B): fp16 mean token cosine 0.9999982, max |Δ| 0.047. fp32 cosine 1.0, max |Δ| 4.5e-5.
+- **S3:** `outputs/detection/2026-10-25/13-15-30/head_bench.json`. 4/4 rows, no OOM (train and infer × fp32 and fp16, 32×40, PyTorch MSDA).
+- Analysis: `notebooks/bench_short_runs.ipynb`. Summary: `results.md` §4 and §6.
 
 ## What the analysis session should do
 1. Confirm S1–S3 succeeded. If anything failed, find the cause before trusting the overnight runs, which use the same code.

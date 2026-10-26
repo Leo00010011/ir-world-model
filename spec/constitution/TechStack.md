@@ -9,17 +9,18 @@ This file lists every technology choice, where code lives, and the rules all fea
 | Language | Python 3.11 | Pinned in `.python-version`; DINO-Foresight is tested on 3.11 |
 | Env / packaging | **uv** (workspace) | Root `pyproject.toml` + `uv.lock`. `uv sync` on the laptop and on the cluster gives identical envs. See §1.1 |
 | Deep learning | PyTorch (CUDA build on the cluster, CPU build is fine locally) | DINO-Foresight pins torch 2.2.0 / torchvision 0.17.0 (cu121); we start from that and only move if needed |
+| Detection framework | **detrex** @ `e244e6c` + **detectron2** @ `70f4543` (pinned submodule, editable, no build isolation) | *F7.* Core dependencies with compiled ops: CPU everywhere, CUDA where `nvcc` is on `PATH` (`slurm/setup_env.sh` sets `FORCE_CUDA=1`, `TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9+PTX"`). Toolchain: CUDA 12.x `nvcc` + host `gcc` ≤ 12 (ctcomp3: nvcc 12.4 + gcc 8.5.0, build 801 s). Needs `setuptools<81` (detrex imports `pkg_resources`) and `opencv-python-headless` (nodes lack `libGL`). The Windows laptop needs MSVC Build Tools |
 | Training loop | **PyTorch Lightning** (`lightning`) | Every trainable model is a `LightningModule`; data comes from `LightningDataModule`s |
 | Configuration | **Hydra** (`hydra-core`, OmegaConf) | Every entry point is a `@hydra.main` script; no argparse |
 | Logging | **Weights & Biases** (`wandb`) through Lightning's `WandbLogger` | Project `ir-world-model`; W&B group = project folder name |
 | HPO | **Optuna** through `hydra-optuna-sweeper` | Only when a spec asks for it |
 | Cluster | **SLURM** through `hydra-submitit-launcher` plus plain `sbatch` templates in `slurm/` | See §5 |
 | Feature storage | **HDF5** (`h5py`) | See §4 |
-| Detection metrics | `pycocotools` (COCO eval), with our own wrapper for the 6-class label space with ignore regions (F2), per-horizon breakdown and bootstrap CIs | |
-| Testing | `pytest` | Run locally with `py -m pytest tests/...` (Windows) or `uv run pytest`. `-m data` tests are **slow on the cluster** (§7) |
+| Detection metrics | `pycocotools` (COCO eval; installed with detectron2 since F7), with our own wrapper for the 6-class label space with ignore regions (F2), per-horizon breakdown and bootstrap CIs | |
+| Testing | `pytest` | Run locally with `py -m pytest tests/...` (Windows) or `uv run pytest`. `-m data` tests are **slow on the cluster**; `-m gpu` tests need CUDA ops and run on ctcomp3 (§7) |
 | Local OS | Windows 11 (development) | Code must be path-agnostic (`pathlib`) and must not assume POSIX-only tools |
 | Cluster OS | Linux + SLURM | |
-| Worst-case GPU | **NVIDIA L4 (24 GB)** (ctcomp3 node hpc-gpu5) | Batch sizes, epochs and memory must fit it (user decision, F4). F4 measured the encoder at 17 frames/s (448×896) and 36 frames/s (448×560) in fp16; a 448×896 batch of 64 does not fit |
+| Worst-case GPU | **NVIDIA L4 (24 GB)** (ctcomp3 node hpc-gpu5) | Batch sizes, epochs and memory must fit it (user decision, F4). F4 measured the encoder at 17 frames/s (448×896) and 36 frames/s (448×560) in fp16; a 448×896 batch of 64 does not fit. F7: with SDPA 90 frames/s at 448×560; the DINO head trains at ≈ 13 img/s (32×40, fp16, compiled MSDA) |
 
 ### 1.1 Installing on the external server
 - uv needs no admin rights. Install it in user space with `pip install --user uv` (or the official standalone installer, which writes to `~/.local/bin`).
@@ -52,11 +53,12 @@ ir-world-model/
 │   ├── feature_extraction/     # F4: R5 probe + encoder throughput; F5 cache if built
 │   │   ├── conf/               # Hydra configs
 │   │   └── *.py                # @hydra.main entry points
-│   ├── detection/              # train/eval DINO-DETR heads on cached features
+│   ├── detection/              # F7: head benchmark; F8: train/eval DINO-DETR heads
 │   ├── wm_eval/                # DINO-Foresight zero-shot rollouts + evaluation
 │   └── wm_adaptation/          # Phase 4 unsupervised adaptation experiments
 ├── third_party/
-│   └── DINO-Foresight/         # git submodule (Sta8is/DINO-Foresight), pinned commit, NOT modified in place
+│   ├── DINO-Foresight/         # git submodule (Sta8is/DINO-Foresight), pinned commit, NOT modified in place
+│   └── detrex/                 # git submodule (IDEA-Research/detrex @ e244e6c, nested detectron2 @ 70f4543), NOT modified; installed editable (F7)
 ├── slurm/                      # sbatch templates shared by all projects
 ├── notebooks/                  # analysis only; never imported by code
 └── tests/                      # pytest, one file per feature: tests/test_<feature>.py
@@ -70,25 +72,26 @@ Rules:
 - **Notebooks** (`notebooks/`) need the root dependency group `notebook` (`ipykernel`, `matplotlib`): `uv sync --group notebook`. A plain `uv sync` removes it again. Notebooks read results from `$IRWM_OUTPUT_ROOT` through `irwm.utils.paths`, never from hard-coded paths.
 - **Dependencies:** deps shared by all projects (torch, lightning, hydra, wandb, …) are declared in `lib/pyproject.toml`. Each feature adds its own deps there, or to its project's `pyproject.toml` if only that project needs them.
 - `lib/irwm` must never import from `projects/`.
-- Third-party code (DINO-Foresight) is used only through an adapter in `irwm/worldmodel/`. We do not patch the submodule. If a change is unavoidable, it is kept as a patch file with its reason recorded in the spec.
+- Third-party code is used only through an adapter: DINO-Foresight in `irwm/worldmodel/`, detrex in `irwm/detection/detrex_adapter.py` (configs loaded with `LazyConfig` from the submodule, never copied). We do not patch the submodule. If a change is unavoidable, it is kept as a patch file with its reason recorded in the spec.
 
 ## 3. Models and fixed hyperparameters
 
 ### 3.1 Encoder: DINOv2 (frozen)
 Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed by the F1 audit (`spec/2026-10-02-dino-foresight-audit/audit.md`).
 - Backbone **DINOv2-Reg ViT-B/14** (`vitb14_reg`), frozen, `eval()`, no grad. Weights are the official `dinov2_vitb14_reg4_pretrain.pth`, bit-identical to the copy inside the DINO-Foresight checkpoint *(F1)*. The model is built from the DINOv2 hub code **pinned to `dinof_release` (`85a24602`)**, because the reference loads the unpinned `main` at runtime *(F1)*. Paths come from `irwm.worldmodel.assets` and env vars (§6).
-- Input **448×896** (32×64 patch tokens), the size of the high-res checkpoint. ImageNet mean/std normalisation. How FLIR's 5:4 frames are mapped to the model input is **still open** (Roadmap R5, decided by the user before F8). F4 implements three policies, chosen by `encoder.policy` (`irwm.features.preprocess`): `stretch` (whole frame → 448×896, exactly the reference transform), `crop` (centre 2:1 band → 448×896) and `native` (centre 5:4 crop → 448×560, 32×40 tokens; thermal is never cropped). Only deterministic centre crops; training augmentation belongs to F8. The F4 FLIR probe numbers are in R5. Below, the token grid is written `H'×W'` (default 32×64).
+- Input **448×896** (32×64 patch tokens), the size of the high-res checkpoint. ImageNet mean/std normalisation. How FLIR's 5:4 frames are mapped to the model input: **`native`, decided 2026-10-25** (Roadmap R5; `encoder.policy` default). F4 implements three policies, chosen by `encoder.policy` (`irwm.features.preprocess`): `stretch` (whole frame → 448×896, exactly the reference transform), `crop` (centre 2:1 band → 448×896) and `native` (centre 5:4 crop → 448×560, 32×40 tokens; thermal is never cropped). Only deterministic centre crops; training augmentation belongs to F8. The F4 FLIR probe numbers are in R5. Below, the token grid is written `H'×W'` (32×64 at the reference size, **32×40 under `native`**).
 - **Features = channel concatenation of the patch-token outputs of blocks 3, 6, 9, 12** (1-indexed; `d_layers 2,5,8,11` in the reference code) → **3072-d**. The CLS token and the 4 register tokens are dropped (2053 → 2048 tokens). **The final LayerNorm is applied to every one of the four blocks** (DINOv2 `get_intermediate_layers` default `norm=True`) *(F1)*.
 - **PCA:** DINO-Foresight's released PCA (`dinov2_pca_448_l[2_5_8_11]_1152.pth`, fit on Cityscapes train) reduces 3072 → **1152-d**. Applied as: standardise each dim by the stored `mean`/`std`, subtract `pca_mean`, then project on `components`. **No whitening** *(F1)*. Implemented in pure torch by `irwm.features.pca.PCABasis` (equal to the reference, |Δ| = 0). This is the space the world model reads and writes. The PCA is part of the frozen encoder and is never re-fit outside Phase 4.
 - **Thermal frames** are single-channel and get **replicated to 3 channels** before normalisation. This choice is written down because it affects every IR result. ImageNet normalisation is kept for thermal (F4 measured it to be no further from DINOv2's input distribution than FLIR RGB; Roadmap R4).
 - **Implementation *(F4)*:** `irwm.features.encoder.DinoV2RegEncoder` equals the reference extraction with |Δ| = 0 in fp32 and in fp16 autocast. Default precision is fp16 autocast over backbone **and** PCA (as `16-mixed`); outputs are cast to fp32. Encoding runs under `torch.no_grad()` (not `inference_mode`), and the module stays in eval even when Lightning calls `.train()`. The pinned hub code runs plain attention (no xFormers): this is what the reference runs, so it is kept for exactness, but it is also why encoding is slow and memory-hungry (F4: ≈ 10 min of encoding per epoch per modality on an L4 at 448×896).
+- **Fused attention *(F7)*:** `irwm.features.encoder.set_attention(backbone, "sdpa")` swaps the hub attention for `F.scaled_dot_product_attention` (FlashAttention-2 / memory-efficient backends), same weights; `"plain"` restores it bit-exactly. L4, 448×560: fp16 37.0 → 90.4 frames/s (2.44×, B = 64), peak memory −65 %; fp32 1.32×. Not bit-exact: SDPA vs plain in fp16 has mean token cosine 0.9999982, below the plain encoder's own fp16-vs-fp32 drift (0.999995). Equivalence tests stay on `plain`; whether training uses SDPA is a per-spec decision. In the thesis, the baseline is "the pinned DINOv2 code's unfused attention fallback (no xFormers)", not DINOv2's intended xFormers setup.
 
 ### 3.2 Detector: DINO-DETR head (ported)
-- DINO-DETR (Zhang et al., 2022) is reimplemented or vendored as a plain `nn.Module` in `irwm/detection/`. There is **no detectron2/detrex runtime dependency**. (DINO-Foresight reports instance segmentation with Mask2Former, but FLIR has boxes only, so we use a box detector.)
+- DINO-DETR (Zhang et al., 2022) is **detrex's own `dino_vitdet`**, run from the pinned, unmodified detrex submodule (§1, §2), as FlowWM does. **detrex and detectron2 are runtime dependencies** (user decision 2026-10-23, F7). The ViT backbone is replaced by `FeatureStem` (LayerNorm + Linear C → 768), so everything from the simple feature pyramid on keeps ViTDet-B's shapes; every hyperparameter is read from detrex's config file. `DINODetector` wraps it: tensors in, losses (train) or xyxy boxes in encoder-input pixels (eval) out. Training needs CUDA (detrex hard-codes `.cuda()` in denoising). MSDA uses detrex's compiled CUDA op (1.5–2.8× faster than its PyTorch fallback, F7). (DINO-Foresight reports instance segmentation with Mask2Former, but FLIR has boxes only, so we use a box detector.)
 - Input is PCA features `[B, 1152, H', W']` (PCA coefficients, single scale), encoded on the fly by the frozen F4 encoder during training (2026-10-15: the F5 cache is deferred) or read from a cache if one is built. The PCA inverse is a fixed linear map, so a learned input projection on the coefficients is equivalent to one on reconstructed features, and we skip reconstruction. The backbone is not part of the module.
 - Trained with Lightning + Hydra. **One head per modality**: `det_rgb` and `det_ir`.
 - The head is trained on `train` and selected on `val`. It is then **frozen** and reused, unchanged, for oracle and world-model evaluation.
-- The port is validated once against the detrex reference config: same architecture hyperparameters, and comparable AP on a small run.
+- The port is validated by a **structure match** against stock detrex (identical `state_dict` keys and shapes outside the stem; deviations D1–D8 in the F7 spec) and a GPU overfit test, not by AP on a small run *(F7)*.
 
 ### 3.3 World model: DINO-Foresight (frozen, zero-shot)
 - Official code from `Sta8is/DINO-Foresight` (MIT), as a submodule. The checkpoint is `dinof_highres.ckpt` from Hugging Face `Sta8is/DINO-Foresight`. **Used zero-shot: never retrained in Phases 0–3.**
@@ -167,7 +170,7 @@ Hydra configs read these through `${oc.env:IRWM_CACHE_ROOT}`. A local `.env` (gi
 - Storage is fp16. Compute is fp32 unless a spec says otherwise. DINO-Foresight was trained in 16-mixed precision, and the adapter follows whatever F1 finds the reference inference uses.
 - Seeds come from Hydra config and are set through `lightning.seed_everything`. World-model inference is deterministic. The adapter sets `torch.backends.cudnn.deterministic` where it matters.
 - Every eval writes a machine-readable JSON (metrics + config + git commit) next to its W&B log.
-- Tests use tiny synthetic data, run on CPU in under a minute, and do not need the real dataset, cached weights or GPUs. Tests that need real data are marked `@pytest.mark.data` and skipped by default.
+- Tests use tiny synthetic data, run on CPU in under a minute, and do not need the real dataset, cached weights or GPUs. Tests that need real data are marked `@pytest.mark.data` and skipped by default. Tests that need CUDA and detrex's CUDA ops are marked `@pytest.mark.gpu` *(F7)*, also skipped by default (`addopts = -m 'not data and not gpu'`), and run on ctcomp3 inside a GPU allocation with `-m gpu`.
 - **`data` tests are slow on the cluster, so budget for it** *(F4, Roadmap R11)*. On ctcomp3 the read-only FLIR tests take **≈ 3 min** (174 s, against 9 s on ctdesk236 with the same code and data) and the encoder equivalence tests **≈ 1.5 min** (92 s), almost all of it loading from the shared filesystem (JSON parsing, the full DINO-Foresight checkpoint, backbone builds). Run them once per change inside a GPU allocation (`srun --gres=gpu:1 …`), not in a loop, and do not take a slow run as a hang. The same startup cost hits every cluster job once per process (not per epoch).
 
 ## 8. Component Registry
@@ -180,7 +183,7 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | SLURM helpers (`on_slurm`, `cluster_plugins`, `resume_ckpt_path`, `sbatch_args`; CLI `python -m irwm.utils.slurm <site>`) | `lib/irwm/utils/slurm.py` | F0 | ✓ |
 | Shared Hydra groups (`irwm_base`, `paths`, `cluster/{local,slurm}`, `wandb`) | `lib/irwm/conf/` (`pkg://irwm.conf`) | F0 | ✓ |
 | Smoke project (Hydra + Lightning + W&B + requeue health check) | `projects/smoke/` | F0 | ✓ |
-| Cluster scripts: `setup_env.sh` (per-cluster env bootstrap), `submit.sh` (site config → sbatch), `job.sbatch`, `env.sh` (.env + W&B key file), `stage_data.sh` (copy FLIR to `$LOCAL_SCRATCH`, repoint `IRWM_DATA_ROOT`; R11) | `slurm/` | F0 | ✓ |
+| Cluster scripts: `setup_env.sh` (per-cluster env bootstrap), `submit.sh` (site config → sbatch), `job.sbatch`, `env.sh` (.env + W&B key file), `stage_data.sh` (copy FLIR to `$LOCAL_SCRATCH`, repoint `IRWM_DATA_ROOT`; R11; sourced by `job.sbatch` when `IRWM_STAGE_DATA=1`, F7) | `slurm/` | F0 | ✓ |
 | Per-cluster site configs (template `example_site.yaml`; sites: `ctcomp3`) | `lib/irwm/conf/cluster/<site>.yaml` | F0 | ✓ |
 | DINO-Foresight submodule @ `d98f765` | `third_party/DINO-Foresight` | F0 | ✓ |
 | FLIR ADAS v2 readers: `FlirSplit`, `FlirRecord`, `FlirImageDataset`, `to_coco_gt` (ignore regions as crowd GT), `load_rgb_thermal_map`, `video_tags` | `lib/irwm/data/flir.py` | F2 | ✓ |
@@ -191,13 +194,17 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Video clip index: `ClipIndex`, `Clip`, `check_pairing`, `find_segments`, `build_clip_index`, `dump_clip_index`/`write_clip_index` (never overwrites a differing file), `summarise` | `lib/irwm/data/clips.py` | F3 | ✓ |
 | Committed clip set `flir_test_fs5_c4f6_cs10` (330 clips, 304 evaluable; shared RGB/thermal rows) + builder entry point | `lib/irwm/data/clip_sets/`, `projects/clip_index/` | F3 | ✓ (ctdesk236) |
 | Preprocessing: `Preprocess`, `ResizeGeometry`, `POLICY_SIZE` (stretch/crop/native centre crops, thermal 1→3, ImageNet norm, box mapping) | `lib/irwm/features/preprocess.py` | F4 | ✓ |
-| `DinoV2RegEncoder` (DINOv2-Reg + PCA, frozen, fp16 autocast; `encode_full`/`encode_pca`/`pca_inverse`), `encoder_tag` | `lib/irwm/features/encoder.py` | F4 | ✓ (equals the reference, \|Δ\| = 0, L4) |
-| Shared Hydra group `encoder` (`policy`, `precision`, `hub_version`) | `lib/irwm/conf/encoder/default.yaml` | F4 | ✓ |
+| `DinoV2RegEncoder` (DINOv2-Reg + PCA, frozen, fp16 autocast; `encode_full`/`encode_pca`/`pca_inverse`), `encoder_tag`; `set_attention` (plain/SDPA, F7) | `lib/irwm/features/encoder.py` | F4, F7 | ✓ (equals the reference, \|Δ\| = 0, L4; SDPA 2.44×) |
+| Shared Hydra group `encoder` (`policy` default `native` since 2026-10-25, `precision`, `hub_version`) | `lib/irwm/conf/encoder/default.yaml` | F4 | ✓ |
 | Shared reference helpers `one_step`, `pca_metrics` (moved from the audit) | `lib/irwm/worldmodel/reference.py` | F4 | ✓ |
-| Feature-extraction project: `r5_probe.py` (R5 FLIR probe), `throughput.py` | `projects/feature_extraction/` | F4 | ✓ (hpc-gpu5, L4) |
+| Feature-extraction project: `r5_probe.py` (R5 FLIR probe), `throughput.py` (GPU-only, fidelity, end-to-end and loader-only; `attentions` plain/SDPA, F7) | `projects/feature_extraction/` | F4, F7 | ✓ (hpc-gpu5, L4) |
 | Encoder/R5 results notebook | `notebooks/encoder_r5_results.ipynb` | F4 | ✓ |
 | HDF5 feature cache | `lib/irwm/features/cache.py` | F5 | ☐ |
-| DINO-DETR head | `lib/irwm/detection/` | F7 | ☐ |
+| detrex submodule @ `e244e6c` (+ detectron2 @ `70f4543`), editable, compiled CUDA ops | `third_party/detrex` | F7 | ✓ (ctcomp3 CUDA build) |
+| DINO-DETR head: `detrex_adapter` (`detrex_root`, `ensure_detrex_projects`, `load_dino_vitdet_config`, `cuda_ops_available`), `FeatureStem`, `FeatureDINO`, `build_dino_config`, `DINODetector` | `lib/irwm/detection/` | F7 | ✓ (6/6 GPU tests, overfit, L4) |
+| Shared Hydra group `detector` (`in_channels`, `stem_dim`, `num_classes`, `overrides`) | `lib/irwm/conf/detector/default.yaml` | F7 | ✓ |
+| Detection project: `head_bench.py` (train/infer cost; `msda` = `cuda` or `pytorch`) | `projects/detection/` | F7 | ✓ (hpc-gpu6, L4) |
+| Performance benchmarks notebook (SDPA, staging, MSDA) | `notebooks/bench_short_runs.ipynb` | F7 | ✓ |
 | COCO evaluator (6-class AP/AP50 with ignore regions, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
 | DINO-Foresight adapter + prediction cache | `lib/irwm/worldmodel/` | F10–F11 | ☐ |
 | Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ✓ (manifests verified on ctcomp3) |

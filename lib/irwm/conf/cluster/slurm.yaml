@@ -13,7 +13,7 @@ cluster:
   devices: 1             # GPUs per node (= tasks per node for Lightning DDP)
   num_nodes: 1
   num_workers: 2
-  precision: 32-true
+  precision: 16-mixed    # CUDA fp16 autocast for every GPU job (user decision 2026-10-26, F8 spec)
   partition: null
   account: null
   qos: null
