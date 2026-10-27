@@ -1,0 +1,6 @@
+# @package _global_
+# Frozen head det_rgb: trained on FLIR RGB (spec/2026-10-26-detector-training-pipeline, FR7).
+modality: rgb
+name: det_rgb
+wandb:
+  tags: [det_rgb]

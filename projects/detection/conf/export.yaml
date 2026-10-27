@@ -1,0 +1,15 @@
+# Export the best checkpoint of a finished training run as a frozen head
+# (spec/2026-10-26-detector-training-pipeline, FR9). CPU only; the login node is fine:
+#   uv run python projects/detection/export.py experiment=det_rgb source_run=slurm-<job id>
+defaults:
+  - irwm_base
+  - experiment: ???
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detection
+source_run: ???            # run name under ${paths.ckpt_root}/detection/
+overwrite: false

@@ -147,3 +147,8 @@ Covers: FR10.
 9. Step 9 — Overfit runs on ctcomp3 (user)
 10. Step 10 — Full training runs on ctcomp3 (user)
 11. Step 11 — Results note and constitution updates
+
+## Amendments
+- **2026-10-26 — Overfit mode: unbounded epochs, constant lr** (user decision). At 256 frames and batch 16 an epoch is 16 steps, so `trainer.max_epochs: 50` would end the overfit at step 800 and the per-epoch milestone 40 would cut lr ×0.1 at step 640. Overfit mode now sets `max_epochs=-1` (so `overfit.max_steps` governs) and `optim.lr_drop_epoch=None`, which `DetectorModule.configure_optimizers` reads as "no scheduler". The 50-epoch runs are unchanged. FR5 (scheduler), FR8 (overfit mode).
+- **2026-10-26 — No metrics from the sanity-check validation** (user decision). Lightning's 2-batch sanity check would otherwise write `val_metrics/epoch_000.json` and log `val/*` from 2 batches, and the overfit pass callback would see it. The sanity batches still run (an error in the val path shows within seconds), but `on_validation_epoch_end` discards them, and the overfit callback ignores sanity checks. FR5 (validation), FR8 (overfit callback).
+- **2026-10-26 — Citation line numbers** (no behaviour change). The 50ep schedule is `detrex/config/configs/common/coco_schedule.py:80` (`lr_multiplier_50ep = default_coco_scheduler(50, 40, 0)`), imported at `dino_vitdet_base_4scale_50ep.py:10`; the MAE `init_checkpoint` is `dino_vitdet_base_4scale_50ep.py:15`.

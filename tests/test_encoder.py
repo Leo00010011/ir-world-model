@@ -303,7 +303,7 @@ class TestConfigAndRefactor:
         with initialize_config_module(config_module="irwm.conf", version_base="1.3"):
             cfg = compose("irwm_base")
         assert OmegaConf.to_container(cfg.encoder) == {"policy": "native", "precision": "fp16",
-                                                       "hub_version": "dinof_release"}
+                                                       "hub_version": "dinof_release", "attention": "plain"}
 
     def test_moved_helpers(self):
         from irwm.worldmodel.reference import one_step, pca_metrics  # noqa: F401

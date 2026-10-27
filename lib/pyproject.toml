@@ -21,6 +21,8 @@ dependencies = [
     "detrex",
     # detrex/config/config.py:18 imports pkg_resources, which setuptools>=81 removed.
     "setuptools<81",
+    # Val mAP of the detector training (F8, irwm.detection.coco_val); also pulled in by detectron2.
+    "pycocotools>=2.0.7",
 ]
 
 [project.optional-dependencies]

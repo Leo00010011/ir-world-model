@@ -103,16 +103,19 @@ class Preprocess:
         if self.modality == "rgb" and (img.ndim != 3 or img.shape[2] != 3):
             raise ValueError(f"rgb expects [H, W, 3], got shape {list(img.shape)}")
 
+    def geometry(self, width: int, height: int) -> ResizeGeometry:
+        """The geometry ``__call__`` returns for a ``width×height`` frame, without any pixels (F8 FR1)."""
+        return ResizeGeometry(src_size=(width, height), crop_box=_crop_box(self.policy, width, height),
+                              out_size=(self.size[1], self.size[0]))
+
     def __call__(self, img: np.ndarray) -> tuple[Tensor, ResizeGeometry]:
         self._check(img)
         pil = Image.fromarray(img).convert("RGB")  # thermal L → 3 identical channels
-        w, h = pil.size
-        box = _crop_box(self.policy, w, h)
-        left, top, cw, ch = box
-        if (cw, ch) != (w, h):
+        geom = self.geometry(*pil.size)
+        left, top, cw, ch = geom.crop_box
+        if (cw, ch) != geom.src_size:
             pil = pil.crop((left, top, left + cw, top + ch))
         x = self.normalize(self.to_tensor(self.resize(pil)))
-        geom = ResizeGeometry(src_size=(w, h), crop_box=box, out_size=(self.size[1], self.size[0]))
         return x, geom
 
     def __repr__(self) -> str:

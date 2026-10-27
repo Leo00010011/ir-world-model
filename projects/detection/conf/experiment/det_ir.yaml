@@ -1,0 +1,6 @@
+# @package _global_
+# Frozen head det_ir: trained on FLIR thermal (spec/2026-10-26-detector-training-pipeline, FR7).
+modality: thermal
+name: det_ir
+wandb:
+  tags: [det_ir]

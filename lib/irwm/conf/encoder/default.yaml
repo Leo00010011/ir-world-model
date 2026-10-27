@@ -5,3 +5,6 @@
 policy: native
 precision: fp16           # fp16 = CUDA autocast as the reference 16-mixed; fp32 for diagnostics
 hub_version: dinof_release  # DINOv2 hub code pinned in irwm.worldmodel.assets
+# plain = the pinned hub attention (reference, bit-exact, F4); sdpa = fused kernels (F7, not bit-exact).
+# F8's detector training and every use of the frozen heads set sdpa (projects/detection/conf/train.yaml).
+attention: plain
