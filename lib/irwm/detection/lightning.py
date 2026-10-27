@@ -17,6 +17,7 @@ Imported explicitly (``irwm.detection.lightning``), not from ``irwm.detection``,
 from __future__ import annotations
 
 import json
+import statistics
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -64,6 +65,7 @@ class DetectorModule(L.LightningModule):
         self._epoch_t0 = 0.0
         self._epoch_images = 0
         self._step_ms: list[float] = []  # every timed step, for the overfit summary (FR8)
+        self._epoch_perf: list[tuple[float, float]] = []  # (encode_ms, step_ms) of this epoch's timed steps
 
     # ------------------------------------------------------------------ data
     def transfer_batch_to_device(self, batch: dict, device: torch.device, dataloader_idx: int) -> dict:
@@ -96,6 +98,7 @@ class DetectorModule(L.LightningModule):
     def on_train_epoch_start(self) -> None:
         self._epoch_t0 = time.perf_counter()
         self._epoch_images = 0
+        self._epoch_perf = []
 
     def on_train_batch_start(self, batch: dict, batch_idx: int) -> None:
         self._timed = self.device.type == "cuda" and batch_idx % self.perf_every == 0
@@ -116,9 +119,6 @@ class DetectorModule(L.LightningModule):
             self.log(f"train/{name}", losses[name], on_step=True, on_epoch=False, batch_size=bs)
         self.log("train/lr", self.optimizers().param_groups[0]["lr"], on_step=True, on_epoch=False, batch_size=bs)
         self.log("train/nonfinite_steps", self._nonfinite_steps.float(), on_step=True, on_epoch=False, batch_size=bs)
-        scaler = getattr(self.trainer.precision_plugin, "scaler", None)
-        if scaler is not None and self.global_step % self.trainer.log_every_n_steps == 0:
-            self.log("train/grad_scale", float(scaler.get_scale()), on_step=True, on_epoch=False, batch_size=bs)
         return loss
 
     def on_train_batch_end(self, outputs: Any, batch: dict, batch_idx: int) -> None:
@@ -128,15 +128,24 @@ class DetectorModule(L.LightningModule):
         encode_ms = 1e3 * (self._t_encoded - self._t_start)
         step_ms = 1e3 * (t_end - self._t_start)
         self._step_ms.append(step_ms)
-        bs = len(batch["targets"])
-        self.log("perf/encode_ms", encode_ms, on_step=True, on_epoch=False, batch_size=bs)
-        self.log("perf/step_ms", step_ms, on_step=True, on_epoch=False, batch_size=bs)
-        self.log("perf/encode_share", encode_ms / step_ms, on_step=True, on_epoch=False, batch_size=bs)
+        self._epoch_perf.append((encode_ms, step_ms))
 
     def on_train_epoch_end(self) -> None:
         epoch_s = time.perf_counter() - self._epoch_t0
         self.log("perf/epoch_s", epoch_s, on_step=False, on_epoch=True)
         self.log("perf/train_images_per_s", self._epoch_images / epoch_s, on_step=False, on_epoch=True)
+        # Once per epoch (amendment 2026-10-27): Lightning writes on_step values only every
+        # log_every_n_steps steps, so per-step timings on other steps would be dropped.
+        if self._epoch_perf:
+            encode_ms = statistics.median(e for e, _ in self._epoch_perf)
+            step_ms = statistics.median(s for _, s in self._epoch_perf)
+            self.log("perf/encode_ms", encode_ms, on_step=False, on_epoch=True)
+            self.log("perf/step_ms", step_ms, on_step=False, on_epoch=True)
+            self.log("perf/encode_share", statistics.median(e / s for e, s in self._epoch_perf),
+                     on_step=False, on_epoch=True)
+        scaler = getattr(self.trainer.precision_plugin, "scaler", None)
+        if scaler is not None:
+            self.log("train/grad_scale", float(scaler.get_scale()), on_step=False, on_epoch=True)
 
     # ------------------------------------------------------------------ val
     def validation_step(self, batch: dict, batch_idx: int) -> None:

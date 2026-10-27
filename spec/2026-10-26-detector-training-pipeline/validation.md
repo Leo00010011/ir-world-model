@@ -59,19 +59,19 @@ CPU groups run in fp32 only because CUDA fp16 autocast does not exist on CPU (th
 - [x] Running `projects/detection/train.py experiment=det_ir` on a machine without CUDA ops exits with a non-zero status and a message containing `cuda_ops_available`.
 
 ### Group 8 — GPU training path (`@pytest.mark.gpu`, ctcomp3 L4)
-- [ ] `Trainer(max_steps=4, precision="16-mixed", limit_val_batches=1, check_val_every_n_epoch=1)` fit on the tiny FLIR tree (thermal, batch 2, stub encoder, reduced detector) completes; `train/loss` is finite at every logged step; `val/AP` is present in `callback_metrics`.
-- [ ] The saved `last.ckpt` has no `encoder.*` key, and resuming from it (`ckpt_path=last`) for 2 more steps works and continues `global_step` from 4.
-- [ ] With a `ModelCheckpoint(monitor="val/AP")` saving at the end of epoch 0's validation, the checkpoint's `epoch` equals the `NNN` of the `val_metrics/epoch_<NNN>.json` written in that validation (FR6 lookup).
-- [ ] `perf/encode_ms`, `perf/step_ms`, `perf/encode_share` are logged on step 0 with `0 < encode_share < 1`.
+- [x] `Trainer(max_steps=4, precision="16-mixed", limit_val_batches=1, check_val_every_n_epoch=1)` fit on the tiny FLIR tree (thermal, batch 2, stub encoder, reduced detector) completes; `train/loss` is finite at every logged step; `val/AP` is present in `callback_metrics`.
+- [x] The saved `last.ckpt` has no `encoder.*` key, and resuming from it (`ckpt_path=last`) for 2 more steps works and continues `global_step` from 4.
+- [x] With a `ModelCheckpoint(monitor="val/AP")` saving at the end of epoch 0's validation, the checkpoint's `epoch` equals the `NNN` of the `val_metrics/epoch_<NNN>.json` written in that validation (FR6 lookup).
+- [ ] `perf/encode_ms`, `perf/step_ms`, `perf/encode_share` are logged at the end of epoch 0 (medians of the timed batches; batch 0 is timed) with `0 < encode_share < 1`, and `train/grad_scale > 0` is logged per epoch *(amended 2026-10-27; the step-0 version passed on hpc-gpu5 at `6425d4c`, re-run pending)*.
 
 ### Group 9 — Real encoder (`@pytest.mark.data` and `@pytest.mark.gpu`, ctcomp3 L4)
-- [ ] `DetectorModule` with the real `DinoV2RegEncoder` (SDPA, fp16) on 2 real thermal val frames, under `torch.autocast("cuda", dtype=torch.float16)` as `16-mixed` does: `encode` → `[2, 1152, 32, 40]` finite, and one training step with the default (non-reduced) detector gives a finite loss.
+- [x] `DetectorModule` with the real `DinoV2RegEncoder` (SDPA, fp16) on 2 real thermal val frames, under `torch.autocast("cuda", dtype=torch.float16)` as `16-mixed` does: `encode` → `[2, 1152, 32, 40]` finite, and one training step with the default (non-reduced) detector gives a finite loss.
 
 ## Data Validity (evidence: `overfit.json`, `train_summary.json`, `val_metrics/`, export `meta.json`, W&B)
-- [ ] **Overfit, RGB and thermal (user decision bar):** `overfit.json` has `passed: true`, with `AP50_person ≥ 0.8` and `AP50_car ≥ 0.8` at some validation within ≤ 3000 steps. If either fails, Step 10 does not start.
+- [x] **Overfit, RGB and thermal (user decision bar):** `overfit.json` has `passed: true`, with `AP50_person ≥ 0.8` and `AP50_car ≥ 0.8` at some validation within ≤ 3000 steps. If either fails, Step 10 does not start.
 - [ ] **fp16 health (deferred fallback, plan.md):** in every overfit and full run, `train/nonfinite_steps` stays < 1 % of steps and the 100-consecutive abort never fires. If one of these fails, the implementer stops and reports (plan.md "Precision"); the item stays open until you decide.
 - [ ] **Staging happened:** every job log of Steps 9–10 (each requeue included) shows `[stage] copied <n> files` with `n == 46450` and `IRWM_DATA_ROOT=<$LOCAL_SCRATCH>/irwm_data`, and every `train_summary.json` / `overfit.json` has `data_root` under `$LOCAL_SCRATCH`.
-- [ ] **Memory at batch 16:** overfit peak `torch.cuda.max_memory_allocated` ≤ 22 GiB on the L4 for both modalities, or the OOM plan was applied (batch 8 × accumulate 2), recorded as an amendment, and the overfit re-run passes at batch 8.
+- [x] *(det_ir on V100S accepted, user decision 2026-10-27)* **Memory at batch 16:** overfit peak `torch.cuda.max_memory_allocated` ≤ 22 GiB on the L4 for both modalities, or the OOM plan was applied (batch 8 × accumulate 2), recorded as an amendment, and the overfit re-run passes at batch 8.
 - [ ] **Training completed:** each 50-epoch run reaches `trainer.current_epoch == 50` (10 validations logged at epochs 5, 10, …, 50), with `train/nonfinite_steps` total < 1 % of all steps.
 - [ ] **Learning:** `train/loss` averaged over epoch 50 is ≤ 50 % of its epoch-1 average, for each detector.
 - [ ] **Done bar (user decision):** best-checkpoint val `AP50_person ≥ 0.30` and `AP50_car ≥ 0.30` for `det_rgb` and for `det_ir`.

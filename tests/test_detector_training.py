@@ -607,10 +607,12 @@ class TestGpuTraining:
         assert losses and all(math.isfinite(v) for v in losses)
         assert "val/AP" in trainer.callback_metrics
 
-        # perf/* on step 0 (perf_every = 50 times batch_idx 0)
-        perf = next(r for r in rows if r.get("perf/encode_share"))
-        assert int(perf["step"]) == 0 and float(perf["perf/encode_ms"]) > 0 and float(perf["perf/step_ms"]) > 0
-        assert 0 < float(perf["perf/encode_share"]) < 1
+        # perf/* and grad_scale once per epoch (amendment 2026-10-27); batch_idx 0 is timed (perf_every = 50)
+        perf = [r for r in rows if r.get("perf/encode_share")]
+        assert perf and [int(r["epoch"]) for r in perf][0] == 0
+        assert float(perf[0]["perf/encode_ms"]) > 0 and float(perf[0]["perf/step_ms"]) > 0
+        assert 0 < float(perf[0]["perf/encode_share"]) < 1
+        assert any(r.get("train/grad_scale") and float(r["train/grad_scale"]) > 0 for r in rows)
 
         # FR6 lookup: each best checkpoint's epoch is the NNN of the JSON written in its validation
         bests = sorted(ckpt_dir.glob("best-e*.ckpt"))
