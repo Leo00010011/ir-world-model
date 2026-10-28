@@ -1,0 +1,27 @@
+# Cross-modal 2x2: both frozen heads (det_rgb, det_ir) on both modalities' video test splits
+# (spec/2026-10-28-cross-modal-detector-transfer, FR5-FR6). Any GPU; it is recorded in transfer.json:
+#   bash slurm/submit.sh ctcomp3 projects/detection/transfer.py \
+#       cluster.timeout_min=60 cluster.cpus_per_task=8 cluster.num_workers=8 cluster.mem_gb=32
+# Detection files are write-once: a rerun stops before encoding unless overwrite=true.
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detection
+
+heads: [det_rgb, det_ir]
+test_modalities: [rgb, thermal]
+split: test                # every frame of video_{rgb,thermal}_test, empty frames included
+batch_size: 16             # = F8's val batch size; no prediction depends on it
+num_workers: ${cluster.num_workers}
+overwrite: false           # replace existing detection files
+
+encoder:
+  attention: sdpa          # merged into the shared encoder group; must match the heads' meta.json (FR1)
+
+wandb:
+  tags: [transfer]

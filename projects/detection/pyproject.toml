@@ -1,7 +1,7 @@
 [project]
 name = "irwm-detection"
 version = "0.1.0"
-description = "F7: DINO-DETR head benchmark (F8 detector training)."
+description = "F7: DINO-DETR head benchmark (F8 detector training, F15 cross-modal transfer)."
 requires-python = ">=3.11,<3.12"
 dependencies = ["irwm"]
 
