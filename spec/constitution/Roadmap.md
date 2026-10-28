@@ -111,7 +111,9 @@ A SLURM-friendly, resumable job that encodes every frame (train, val, video test
 
 ## Phase 2: Detection on real features (H1)
 
-**Current focus: F6** (F8 ✓ 2026-10-28; F7 ✓ 2026-10-26). The goal of this phase in the current milestone is a DINO-DETR detector that takes DINOv2-Reg features as input and is trained on FLIR, one per modality. Rigorous evaluation (F6) and the H1 comparison (F9) come after it. Execution order: F7 ✓ → F8 ✓, then **F6 → F9**.
+**Current focus: F15** (F8 ✓ 2026-10-28; F7 ✓ 2026-10-26). The goal of this phase in the current milestone is a DINO-DETR detector that takes DINOv2-Reg features as input and is trained on FLIR, one per modality. Rigorous evaluation (F6) and the H1 comparison (F9) come after it. Execution order: F7 ✓ → F8 ✓, then **F15 → F6 → F9**.
+
+> **2026-10-28 cross-modal transfer (user):** F15 added. It scores both frozen heads on both modalities' test sets (a 2×2 matrix) right away with F8's off-the-shelf mAP, measuring domain shift at the detector level before the world model is involved. Phase 4's draft range moves from "F15+" to "F16+" (no feature had been started).
 
 ### F7 · DINO-DETR head port ✓ DONE (2026-10-26)
 > Spec, results note and notebook: `spec/2026-10-23-dino-detr-head-port/` (`results.md`), `notebooks/bench_short_runs.ipynb`. detrex @ `e244e6c` (+ detectron2 @ `70f4543`) is an unmodified, editable submodule with compiled CUDA ops (nvcc 12.4 + gcc 8.5.0, 801 s on the ctcomp3 login node). GPU runs on L4 (hpc-gpu5/6) at commit `9b5a7ff` (+ changes later committed in `ca02d8e`); 213 default tests + 6 `gpu` tests pass. W&B `4c11kfnm` (head bench, CUDA MSDA), `64y1udph` (PyTorch MSDA), `6o47ocr3` / `xlop65eg` (encoder, BeeGFS / staged).
@@ -157,6 +159,32 @@ Steps: (1) overfit a few hundred real `train` frames end-to-end to prove the pip
 **Depends on:** F2, F4 ✓, F7 ✓, and R5 ✓ (`native`). *(Before 2026-10-15: F5, F6, F7.)* The dataset is on ctcomp3 (copied during F4).
 **Budget (F4, updated by F7 2026-10-26):** plan for an **NVIDIA L4 (24 GB) as the worst case**. At `native` (448×560, 32×40 tokens), fp16, SDPA encoder + compiled MSDA: the encoder runs at ≈ 89 frames/s end to end on real FLIR with 8 DataLoader workers (loader not the limit), the head trains at ≈ 13 img/s (B = 8, 9.1 GiB). A sequential estimate is **≈ 15 min per epoch per modality, ≈ 87 % of it head** (F7 bench used 5 boxes per image; real FLIR has more). With plain attention the encoder alone is ≈ 5 min per epoch. Use SDPA (decide in the spec, since it is not bit-exact) and compiled MSDA. Expect a few minutes of startup per job on the cluster (R11).
 
+### F15 · Cross-modal detector transfer (2×2) ☐
+> Spec: `spec/2026-10-28-cross-modal-detector-transfer/` (2026-10-28). **Decisions (user):**
+> - Test 2×2 only, with no `val` cells.
+> - The diagonal-vs-val check is reported, not gated.
+> - All ≤ 300 detections per frame are saved: pycocotools applies `maxDets` per (image, class), so any per-image cut would change AP.
+> - Detections are gzipped JSON at a stable, write-once path (TechStack §4.4), with per-image `video_id`/`frame_index` and the `video_tags` map.
+> - Tag and day/night breakdowns are out of scope until the outputs exist.
+> - The inference path lives in `irwm.detection.inference` so that F9/F12 can reuse it.
+
+Score the two frozen F8 heads on both modalities' `video_*_test` splits. That gives a **2×2 detector × test-modality matrix**:
+
+| | RGB test | IR test |
+|---|---|---|
+| `det_rgb` | in-domain | cross-modal |
+| `det_ir` | cross-modal | in-domain |
+
+This measures **domain shift at the detector level**: how much of what a head learned on one modality's DINOv2-Reg features carries over to the other's. It is the encoder-level counterpart of the world-model shift studied in Phase 3, and it puts a number on the RGB↔IR gap before any prediction is involved.
+- **Heads and features:** `det_rgb` and `det_ir` are loaded unchanged with `load_frozen_detector`. The input frames always go through the **test modality's** preprocessing (`Preprocess(policy, modality)`: thermal replicated 1→3, the RGB centre crop) and the encoder named in each head's `meta.json` (`native`, `sdpa`). Both heads share that encoder setup, so each test split is encoded once and both heads run on the same features.
+- **Scoring:** each cell is scored against the **test modality's own annotations** (`FlirSplit.to_coco_gt` on `video_{rgb,thermal}_test`, ignore regions as crowd, 640×512-normalised areas), with F8's `to_flir_detections` + `coco_map`. Metrics: AP, AP50, APS/M/L, per-class AP/AP50, plus AP/AP50 on **person + car only** (R10: the cross-modal cells also compare different labelling densities for sign/light/bike).
+- **Not F6 or F9:** no bootstrap CIs or per-horizon breakdown. The diagonal cells are **preliminary numbers for F9's Result Table 1**, and F9 re-scores them with F6. Small differences between cells are reported as preliminary until CIs exist.
+- **Output:** one JSON per run (metrics + config + git commit, TechStack §7) under `$IRWM_OUTPUT_ROOT`, a W&B run, and a results note in the spec with the 2×2 tables. The per-image detections are saved too, so F6/F9 can re-score them without re-running inference. Record the GPU each run used.
+- **Cost:** 2 × 3749 frames encoded once each, plus 4 head passes. At F7's ≈ 31 ms per frame for full inference (L4), that is minutes, not hours.
+
+**Done when:** all four cells (AP, AP50, person + car AP/AP50, per-class AP) are in the results note and in W&B with their JSON, and each diagonal cell's ratio to that head's F8 val AP is reported (no gate, user decision 2026-10-28; a ratio outside [0.5, 1.5] gets a one-sentence note). The four detection files exist, and re-scoring them reproduces the reported metrics exactly.
+**Depends on:** F2 ✓, F8 ✓ (frozen heads, `coco_val`). Not F6.
+
 ### F6 · Detection evaluator ⏸ deferred (2026-10-15)
 > **Deferred:** not needed to get a working detector (F8 uses an off-the-shelf val mAP). Needed before F9.
 
@@ -172,7 +200,8 @@ Results are written as JSON.
 > **Deferred:** comes after F8 and F6. Video-test features are encoded on the fly unless F5 has been built by then.
 
 Evaluate `det_rgb` on RGB video-test features and `det_ir` on IR video-test features, on the primary (AP, AP50) and secondary metrics, and also per static `val` split. Produces **Result Table 1: does IR beat RGB on real DINOv2 features?** It also includes a check on a `val` subset using full 3072-d features (encoded on the fly) to show how much the Cityscapes PCA costs each modality (R7).
-**Depends on:** F6, F8.
+F15 gives preliminary diagonal numbers and saved detections; F9 reuses its inference path rather than adding a second one.
+**Depends on:** F6, F8 (F15 if it is done by then).
 
 ---
 
@@ -219,7 +248,7 @@ Set up adaptation without leaking the test set:
 
 **Depends on:** F12.
 
-### F15+ · Adaptation techniques ☐
+### F16+ · Adaptation techniques ☐
 One feature per technique, each evaluated with the F14 harness. Candidates:
 - **PCA re-fit on target-domain (unlabeled) features.** This needs either a mapping into the old basis or an adapted model.
 - **Feature-manifold projection:** map predicted features onto the real-feature manifold with a denoiser or autoencoder trained only on real (unlabeled) features.

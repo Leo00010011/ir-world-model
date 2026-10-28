@@ -146,6 +146,10 @@ Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`, with
 - Checkpoints go in `$IRWM_CKPT_ROOT/<project>/<run_name>/`. Lightning `last.ckpt` is always saved so SLURM requeues can resume.
 - Frozen detector exports: `$IRWM_CKPT_ROOT/detection/frozen/<name>/{head.pt, meta.json}`. `head.pt` holds only the `detr.*` state dict (no encoder); `meta.json` records `modality`, `precision`, `source_ckpt` (relative to `$IRWM_CKPT_ROOT`), `epoch`, `global_step`, `val_metrics`, `detector`, `encoder` (incl. `attention`, `encoder_tag`), `image_size`, `head_sha256`, `git`, `created_at`. Exports are write-once (`overwrite=True` to replace). Training checkpoints in `$IRWM_CKPT_ROOT/detection/slurm-<job>/` (`best-eNNN.ckpt`, `last.ckpt`) never contain `encoder.*` keys *(F8)*.
 - Hydra run dirs go in `$IRWM_OUTPUT_ROOT/<project>/${now:%Y-%m-%d}/${now:%H-%M-%S}`, and multirun sweeps under `.../multirun/`.
+- **Saved detections of the frozen heads** *(F15, planned)*: `$IRWM_OUTPUT_ROOT/detection/detections/<encoder_tag>/<head>/<modality>_<split>.json.gz`.
+  - Contents: gzipped JSON with the COCO results list (all ≤ 300 boxes per frame, FLIR px), the head and encoder provenance, and per-image `video_id`/`frame_index` plus the split's `video_tags`.
+  - Write-once: an existing file is replaced only with `overwrite=true`.
+  - Written and read only through `irwm.detection.inference` (`save_detections` / `load_detections`). Consumers re-score with `coco_map` instead of running inference again.
 
 ## 5. SLURM rules
 - Every entry point runs headless, takes no interactive input, and is fully described by its Hydra config.
@@ -214,6 +218,9 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Frozen heads: `frozen_dir`, `export_frozen`, `frozen_meta`, `load_frozen_detector` | `lib/irwm/detection/frozen.py` | F8 | ✓ |
 | Detection project: `train.py` (50-epoch runs + overfit mode, `experiment=det_rgb/det_ir`), `export.py` (best `val/AP` checkpoint → frozen head) | `projects/detection/` | F8 | ✓ (hpc-gpu5/6, L4) |
 | Frozen detectors `det_rgb` (AP 0.302, SHA `96db5065…`) and `det_ir` (AP 0.330, SHA `2ff38732…`) | `$IRWM_CKPT_ROOT/detection/frozen/` | F8 | ✓ |
+| Multi-head inference on a `FlirSplit` (encode once, N frozen heads), shared-encoder check, person + car AP, detections file (`save_detections`/`load_detections`/`detections_path`) | `lib/irwm/detection/inference.py` | F15 | ☐ |
+| Cross-modal 2×2 entry point (`transfer.py`, `conf/transfer.yaml`) | `projects/detection/` | F15 | ☐ |
+| Saved test detections of `det_rgb`/`det_ir` on both modalities | `$IRWM_OUTPUT_ROOT/detection/detections/` | F15 | ☐ |
 | COCO evaluator (6-class AP/AP50 with ignore regions, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
 | DINO-Foresight adapter + prediction cache | `lib/irwm/worldmodel/` | F10–F11 | ☐ |
 | Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ✓ (manifests verified on ctcomp3) |
