@@ -92,6 +92,8 @@ Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed by the F1 audit
 - Trained with Lightning + Hydra. **One head per modality**: `det_rgb` and `det_ir`.
 - The head is trained on `train` and selected on `val`. It is then **frozen** and reused, unchanged, for oracle and world-model evaluation.
 - The port is validated by a **structure match** against stock detrex (identical `state_dict` keys and shapes outside the stem; deviations D1–D8 in the F7 spec) and a GPU overfit test, not by AP on a small run *(F7)*.
+- **Training recipe:** `spec/2026-10-26-detector-training-pipeline/` (F8), detrex's DINO 50ep schedule with deviations E1–E6 (`projects/detection/conf/train.yaml` header): backbone lr factor 1.0, `16-mixed`, epoch-interval `MultiStepLR` (×0.1 at 40), validation every 5 epochs, best `val/AP` checkpoint. The frozen encoder runs with `encoder.attention: sdpa` (not bit-exact with `plain`; the heads were trained on SDPA features) *(F8)*.
+- **Frozen heads:** `$IRWM_CKPT_ROOT/detection/frozen/<name>/` (`det_rgb`, `det_ir`), loaded only with `irwm.detection.frozen.load_frozen_detector(name)`, which checks `head_sha256` and returns the detector in `eval()` with no grad. Inputs must come from the encoder named in `meta.json` (`encoder_tag`, `attention`, `policy`, `image_size`) *(F8)*.
 
 ### 3.3 World model: DINO-Foresight (frozen, zero-shot)
 - Official code from `Sta8is/DINO-Foresight` (MIT), as a submodule. The checkpoint is `dinof_highres.ckpt` from Hugging Face `Sta8is/DINO-Foresight`. **Used zero-shot: never retrained in Phases 0–3.**
@@ -142,6 +144,7 @@ Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`, with
 
 ### 4.4 Checkpoints and outputs
 - Checkpoints go in `$IRWM_CKPT_ROOT/<project>/<run_name>/`. Lightning `last.ckpt` is always saved so SLURM requeues can resume.
+- Frozen detector exports: `$IRWM_CKPT_ROOT/detection/frozen/<name>/{head.pt, meta.json}`. `head.pt` holds only the `detr.*` state dict (no encoder); `meta.json` records `modality`, `precision`, `source_ckpt` (relative to `$IRWM_CKPT_ROOT`), `epoch`, `global_step`, `val_metrics`, `detector`, `encoder` (incl. `attention`, `encoder_tag`), `image_size`, `head_sha256`, `git`, `created_at`. Exports are write-once (`overwrite=True` to replace). Training checkpoints in `$IRWM_CKPT_ROOT/detection/slurm-<job>/` (`best-eNNN.ckpt`, `last.ckpt`) never contain `encoder.*` keys *(F8)*.
 - Hydra run dirs go in `$IRWM_OUTPUT_ROOT/<project>/${now:%Y-%m-%d}/${now:%H-%M-%S}`, and multirun sweeps under `.../multirun/`.
 
 ## 5. SLURM rules
@@ -195,7 +198,7 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Committed clip set `flir_test_fs5_c4f6_cs10` (330 clips, 304 evaluable; shared RGB/thermal rows) + builder entry point | `lib/irwm/data/clip_sets/`, `projects/clip_index/` | F3 | ✓ (ctdesk236) |
 | Preprocessing: `Preprocess`, `ResizeGeometry`, `POLICY_SIZE` (stretch/crop/native centre crops, thermal 1→3, ImageNet norm, box mapping) | `lib/irwm/features/preprocess.py` | F4 | ✓ |
 | `DinoV2RegEncoder` (DINOv2-Reg + PCA, frozen, fp16 autocast; `encode_full`/`encode_pca`/`pca_inverse`), `encoder_tag`; `set_attention` (plain/SDPA, F7) | `lib/irwm/features/encoder.py` | F4, F7 | ✓ (equals the reference, \|Δ\| = 0, L4; SDPA 2.44×) |
-| Shared Hydra group `encoder` (`policy` default `native` since 2026-10-25, `precision`, `hub_version`) | `lib/irwm/conf/encoder/default.yaml` | F4 | ✓ |
+| Shared Hydra group `encoder` (`policy` default `native` since 2026-10-25, `precision`, `hub_version`, `attention` default `plain`, F8; detection training sets `sdpa`) | `lib/irwm/conf/encoder/default.yaml` | F4, F8 | ✓ |
 | Shared reference helpers `one_step`, `pca_metrics` (moved from the audit) | `lib/irwm/worldmodel/reference.py` | F4 | ✓ |
 | Feature-extraction project: `r5_probe.py` (R5 FLIR probe), `throughput.py` (GPU-only, fidelity, end-to-end and loader-only; `attentions` plain/SDPA, F7) | `projects/feature_extraction/` | F4, F7 | ✓ (hpc-gpu5, L4) |
 | Encoder/R5 results notebook | `notebooks/encoder_r5_results.ipynb` | F4 | ✓ |
@@ -205,6 +208,12 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Shared Hydra group `detector` (`in_channels`, `stem_dim`, `num_classes`, `overrides`) | `lib/irwm/conf/detector/default.yaml` | F7 | ✓ |
 | Detection project: `head_bench.py` (train/infer cost; `msda` = `cuda` or `pytorch`) | `projects/detection/` | F7 | ✓ (hpc-gpu6, L4) |
 | Performance benchmarks notebook (SDPA, staging, MSDA) | `notebooks/bench_short_runs.ipynb` | F7 | ✓ |
+| Detection data: `FlirDetectionDataset` (encoder-frame boxes, hflip, empty filter), `collate_detection`, `first_nonempty_ids`, `FlirDetectionDataModule` (`val_gt`); `Preprocess.geometry` | `lib/irwm/data/detection.py`, `lib/irwm/features/preprocess.py` | F8 | ✓ |
+| Val mAP: `to_flir_detections` (encoder frame → FLIR pixels, COCO ids), `coco_map` (pycocotools, ignore regions as crowd, per-class AP/AP50) | `lib/irwm/detection/coco_val.py` | F8 | ✓ |
+| `DetectorModule` (frozen on-the-fly encoder, AdamW + `MultiStepLR`, encoder stripped from checkpoints, non-finite guard, `perf/*` timing) | `lib/irwm/detection/lightning.py` | F8 | ✓ (L4, 2 × 50 epochs) |
+| Frozen heads: `frozen_dir`, `export_frozen`, `frozen_meta`, `load_frozen_detector` | `lib/irwm/detection/frozen.py` | F8 | ✓ |
+| Detection project: `train.py` (50-epoch runs + overfit mode, `experiment=det_rgb/det_ir`), `export.py` (best `val/AP` checkpoint → frozen head) | `projects/detection/` | F8 | ✓ (hpc-gpu5/6, L4) |
+| Frozen detectors `det_rgb` (AP 0.302, SHA `96db5065…`) and `det_ir` (AP 0.330, SHA `2ff38732…`) | `$IRWM_CKPT_ROOT/detection/frozen/` | F8 | ✓ |
 | COCO evaluator (6-class AP/AP50 with ignore regions, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
 | DINO-Foresight adapter + prediction cache | `lib/irwm/worldmodel/` | F10–F11 | ☐ |
 | Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ✓ (manifests verified on ctcomp3) |
