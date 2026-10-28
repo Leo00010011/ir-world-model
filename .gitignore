@@ -38,3 +38,4 @@ Thumbs.db
 !lib/irwm/data/clip_sets/*.json
 /feature_extraction/
 outputs/*
+checkpoints/*
