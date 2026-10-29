@@ -41,26 +41,26 @@
 - [x] Without CUDA ops (test skipped if `cuda_ops_available()`): `python projects/detection/transfer.py` exits non-zero and stderr contains `cuda_ops_available`.
 
 ### Group 7 — GPU (`@pytest.mark.gpu`, run on ctcomp3 inside a GPU allocation)
-- [ ] Tiny thermal test split, reduced detector moved to CUDA, stub encoder on CUDA, `device="cuda"` → finite `score`s in `[0, 1]`, the same `image_ids` as the CPU run, and ≤ 300 detections per image. Detector parameters stay fp32 after the call (autocast does not cast weights).
+- [x] Tiny thermal test split, reduced detector moved to CUDA, stub encoder on CUDA, `device="cuda"` → finite `score`s in `[0, 1]`, the same `image_ids` as the CPU run, and ≤ 300 detections per image. Detector parameters stay fp32 after the call (autocast does not cast weights).
 
 ### Group 8 — Real heads (`@pytest.mark.data` + `gpu`, ctcomp3; skipped if `frozen/det_rgb/meta.json` is missing)
-- [ ] `shared_encoder_meta(["det_rgb", "det_ir"])` returns `encoder.attention == "sdpa"`, `encoder.policy == "native"`, `image_size == (448, 560)`.
-- [ ] The first 4 thermal test frames (ascending `image_id`, a `FlirSplit` restricted to those records), both real heads, the real encoder (`from_assets` + `set_attention(..., "sdpa")`) on CUDA → 2 lists, each with 4 distinct `image_id`s, 1–300 detections per image, all `bbox` inside the 640×512 frame within 1 px.
+- [x] `shared_encoder_meta(["det_rgb", "det_ir"])` returns `encoder.attention == "sdpa"`, `encoder.policy == "native"`, `image_size == (448, 560)`.
+- [x] The first 4 thermal test frames (ascending `image_id`, a `FlirSplit` restricted to those records), both real heads, the real encoder (`from_assets` + `set_attention(..., "sdpa")`) on CUDA → 2 lists, each with 4 distinct `image_id`s, 1–300 detections per image, all `bbox` inside the 640×512 frame within 1 px.
 
 ## Data Validity (`transfer.json`, the 4 detection files, the job log; results.md)
-- [ ] **Four cells complete:** `cells` has `det_rgb` and `det_ir`, each with `rgb` and `thermal`. Each cell has the 6 base keys (`AP`, `AP50`, `AP75`, `APs`, `APm`, `APl`), the 12 per-class keys and the 2 person + car keys (20 keys).
-- [ ] **All frames scored:** `n_images == {"rgb": 3749, "thermal": 3749}` (F2), and each detection file has `n_images == 3749`.
-- [ ] **Detection files complete:** 4 files exist at `detections_path(head, modality)`. Each has `1 ≤ n_detections ≤ 3749 × 300 = 1,124,700`, and every `image_id` belongs to the matching test split. The `sha256` in `transfer.json` equals `sha256sum` of the file.
-- [ ] **Re-score:** for each of the 4 files, `with_person_car(coco_map(to_coco_gt, load_detections(path)["detections"]))` on CPU equals `transfer.json` `cells[head][modality]` for every key, with `|Δ| = 0` (NaN == NaN). If this fails, the saved files cannot stand in for the run, and F9 cannot reuse them.
-- [ ] **Encoded once per split:** `transfer.json` `timing` has exactly one `encode_s` per modality (2 values) and four `head_s` values. Total encoded frames = 7,498.
-- [ ] **Diagonal reported:** `diag_vs_val` has `det_rgb` (val AP 0.3021, AP50 0.5726) and `det_ir` (val AP 0.3297, AP50 0.6264), each with `test_AP`, `ratio`, `test_AP50`, `ratio50`. The ratios are copied into results.md. There is no gate (user decision, 2026-10-28); a ratio outside [0.5, 1.5] gets one sentence in results.md.
-- [ ] **Transfer ratios:** `transfer_ratio` has exactly `det_rgb.thermal` and `det_ir.rgb`, each with 4 keys, and `transfer_ratio["det_rgb"]["thermal"]["AP"] == cells["det_rgb"]["thermal"]["AP"] / cells["det_ir"]["thermal"]["AP"]` to `1e-12`.
-- [ ] **Cost and GPU recorded:** `device.name` is non-empty, `device.peak_mem_gib > 0`, `device.slurm_job_id` is set, and `timing.wall_s` is in results.md together with the GPU name.
-- [ ] **W&B:** the run has `test/det_rgb/thermal/AP` (and the other 79 cell keys), the 8 `transfer/*` keys and the `transfer/matrix` table with 4 rows. The run id is in results.md.
-- [ ] **Results note:** results.md has the 2×2 tables for AP, AP50, AP_person_car and AP50_person_car, per-class AP/AP50 and APs/APm/APl per cell, the transfer ratios, `diag_vs_val`, cost, provenance (commit, job, W&B id, file SHA-256s) and the three caveats of FR7 (R10, preliminary until F6, RGB `native` edge crop).
+- [x] **Four cells complete:** `cells` has `det_rgb` and `det_ir`, each with `rgb` and `thermal`. Each cell has the 6 base keys (`AP`, `AP50`, `AP75`, `APs`, `APm`, `APl`), the 12 per-class keys and the 2 person + car keys (20 keys).
+- [x] **All frames scored:** `n_images == {"rgb": 3749, "thermal": 3749}` (F2), and each detection file has `n_images == 3749`.
+- [x] **Detection files complete:** 4 files exist at `detections_path(head, modality)`. Each has `1 ≤ n_detections ≤ 3749 × 300 = 1,124,700`, and every `image_id` belongs to the matching test split. The `sha256` in `transfer.json` equals `sha256sum` of the file.
+- [x] **Re-score:** for each of the 4 files, `with_person_car(coco_map(to_coco_gt, load_detections(path)["detections"]))` on CPU equals `transfer.json` `cells[head][modality]` for every key, with `|Δ| = 0` (NaN == NaN). If this fails, the saved files cannot stand in for the run, and F9 cannot reuse them.
+- [x] **Encoded once per split:** `transfer.json` `timing` has exactly one `encode_s` per modality (2 values) and four `head_s` values. Total encoded frames = 7,498.
+- [x] **Diagonal reported:** `diag_vs_val` has `det_rgb` (val AP 0.3021, AP50 0.5726) and `det_ir` (val AP 0.3297, AP50 0.6264), each with `test_AP`, `ratio`, `test_AP50`, `ratio50`. The ratios are copied into results.md. There is no gate (user decision, 2026-10-28); a ratio outside [0.5, 1.5] gets one sentence in results.md.
+- [x] **Transfer ratios:** `transfer_ratio` has exactly `det_rgb.thermal` and `det_ir.rgb`, each with 4 keys, and `transfer_ratio["det_rgb"]["thermal"]["AP"] == cells["det_rgb"]["thermal"]["AP"] / cells["det_ir"]["thermal"]["AP"]` to `1e-12`.
+- [x] **Cost and GPU recorded:** `device.name` is non-empty, `device.peak_mem_gib > 0`, `device.slurm_job_id` is set, and `timing.wall_s` is in results.md together with the GPU name.
+- [x] **W&B:** the run has `test/det_rgb/thermal/AP` (and the other 79 cell keys), the 8 `transfer/*` keys and the `transfer/matrix` table with 4 rows. The run id is in results.md.
+- [x] **Results note:** results.md has the 2×2 tables for AP, AP50, AP_person_car and AP50_person_car, per-class AP/AP50 and APs/APm/APl per cell, the transfer ratios, `diag_vs_val`, cost, provenance (commit, job, W&B id, file SHA-256s) and the three caveats of FR7 (R10, preliminary until F6, RGB `native` edge crop).
 
 ## Data Architecture Integrity
-- [ ] **Provenance:** `transfer.json` `git.dirty == false`, and its commit is the one in results.md. Each `heads[*].head_sha256` equals the frozen `meta.json` value (`96db5065…` for `det_rgb`, `2ff38732…` for `det_ir`), and equals `head_sha256` inside the matching detection files.
+- [x] **Provenance:** `transfer.json` `git.dirty == false`, and its commit is the one in results.md. Each `heads[*].head_sha256` equals the frozen `meta.json` value (`96db5065…` for `det_rgb`, `2ff38732…` for `det_ir`), and equals `head_sha256` inside the matching detection files.
 - [ ] **Frozen heads untouched:** `sha256sum $IRWM_CKPT_ROOT/detection/frozen/*/head.pt` after the run equals the values above, and the `meta.json` mtimes are unchanged.
 - [ ] **Writes only under the allowed roots:** the run creates files only under `$IRWM_OUTPUT_ROOT` (run dir and `detection/detections/`). Nothing is written under `$IRWM_DATA_ROOT` or `$IRWM_CKPT_ROOT`, and the git tree is clean after the run.
 - [x] **Write-once enforced (reviewed by eye + Group 4):** in `transfer.py`, `check_outputs_free` on the 4 detection paths runs before `load_frozen_detector` and before the encoder is built (FR6 step 2). Group 4's `check_outputs_free` and `save_detections` tests pass. No second cluster job is submitted for this.

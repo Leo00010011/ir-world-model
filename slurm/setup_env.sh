@@ -71,7 +71,7 @@ if command -v nvcc >/dev/null 2>&1; then
     reinstall=(--reinstall-package detectron2 --reinstall-package detrex)
     echo "  building detectron2/detrex CUDA ops: $(nvcc --version | tail -1) | $(gcc --version | head -1)"
 else
-    warn "nvcc not found: detectron2/detrex get CPU-only ops, so GPU training will fail (load a CUDA 12.x module and re-run)"
+    warn "nvcc not found: detectron2/detrex get CPU-only ops. projects/detection needs the CUDA ops (load a CUDA 12.x module and re-run); projects/detector_kit falls back to PyTorch deformable attention"
 fi
 build_start=${SECONDS}
 uv sync --frozen ${reinstall[@]+"${reinstall[@]}"}  # empty-array safe under set -u

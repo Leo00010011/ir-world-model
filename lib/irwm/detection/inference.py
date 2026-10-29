@@ -101,11 +101,13 @@ def _sync(device: torch.device) -> float:
 
 def predict_split(detectors: Mapping[str, DINODetector], split: FlirSplit, encoder: nn.Module, *,
                   policy: Policy, image_size: tuple[int, int], batch_size: int = 16,
-                  num_workers: int = 0, device: str | torch.device = "cpu") -> SplitPrediction:
+                  num_workers: int = 0, device: str | torch.device = "cpu",
+                  log_every: int = 0) -> SplitPrediction:
     """Every frame of ``split`` (ascending ``image_id``) encoded once per batch, then every head on it.
 
     ``encoder.encode_pca``: ``[B, 3, H, W]`` → ``[B, H', W', 1152]``; heads get ``[B, 1152, H', W']``.
     Heads must be in eval mode. On CUDA the head forward runs under fp16 autocast, as F8 validated.
+    ``log_every > 0`` prints progress every ``log_every`` batches and after the last one.
     """
     if not detectors:
         raise ValueError("predict_split needs at least one detector")
@@ -123,8 +125,9 @@ def predict_split(detectors: Mapping[str, DINODetector], split: FlirSplit, encod
     head_s = {name: 0.0 for name in detectors}
     encode_s = 0.0
     image_ids: list[int] = []
+    t_start = time.perf_counter()
     with torch.no_grad():
-        for batch in loader:
+        for i, batch in enumerate(loader, 1):
             images = batch["images"].to(device, non_blocking=True)
             t0 = _sync(device)
             feats = encoder.encode_pca(images).permute(0, 3, 1, 2).contiguous()
@@ -138,6 +141,11 @@ def predict_split(detectors: Mapping[str, DINODetector], split: FlirSplit, encod
                 detections[name].extend(to_flir_detections(preds, batch["image_ids"], batch["geometries"]))
                 t1 = _sync(device)
             image_ids.extend(batch["image_ids"])
+            if log_every > 0 and (i % log_every == 0 or i == len(loader)):
+                done, elapsed = len(image_ids), time.perf_counter() - t_start
+                eta = elapsed / done * (len(dataset) - done)
+                print(f"[predict_split] {split.modality}/{split.split}: {done}/{len(dataset)} images, "
+                      f"{elapsed:.0f} s elapsed, ~{eta:.0f} s left", flush=True)
     return SplitPrediction(detections=detections, image_ids=image_ids, encode_s=encode_s, head_s=head_s)
 
 

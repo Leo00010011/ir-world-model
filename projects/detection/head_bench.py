@@ -15,7 +15,6 @@ Spec: spec/2026-10-23-dino-detr-head-port (FR10).
 
 from __future__ import annotations
 
-import importlib
 import json
 import statistics
 import time
@@ -29,6 +28,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from irwm.detection import DINODetector, cuda_ops_available
 from irwm.detection.detector import PATCH
+from irwm.detection.detrex_adapter import use_pytorch_msda
 from irwm.utils.paths import load_env
 from irwm.utils.tracking import git_info, make_wandb_logger
 
@@ -48,24 +48,6 @@ def synthetic_targets(b: int, height: int, width: int, gen: torch.Generator) -> 
         boxes[:, 1::2] = boxes[:, 1::2].clamp(max=height)
         targets.append({"boxes": boxes.cuda(), "labels": torch.randint(0, 6, (BOXES_PER_IMAGE,), generator=gen).cuda()})
     return targets
-
-
-def use_pytorch_msda() -> None:
-    """Route detrex's ``MultiScaleDeformableAttention`` to its pure-PyTorch path on CUDA too.
-
-    Its forward looks ``MultiScaleDeformableAttnFunction`` up as a module global at call time
-    (``detrex/layers/multi_scale_deform_attn.py``), so replacing that name switches every layer
-    without touching the submodule. The CPU tests already pin both paths to the same output.
-    """
-    msda = importlib.import_module("detrex.layers.multi_scale_deform_attn")
-    fallback = msda.multi_scale_deformable_attn_pytorch
-
-    class _PyTorchMSDA:
-        @staticmethod
-        def apply(value, spatial_shapes, level_start_index, sampling_locations, attention_weights, im2col_step):
-            return fallback(value, spatial_shapes, sampling_locations, attention_weights)
-
-    msda.MultiScaleDeformableAttnFunction = _PyTorchMSDA
 
 
 def _step(model: DINODetector, opt: torch.optim.Optimizer, mode: str, precision: str,

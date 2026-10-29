@@ -1,0 +1,29 @@
+# Run a DINO-DETR head on a folder of images or on a FLIR split (with mAP).
+# Normally launched through inference.sh, which maps its flags to these keys:
+#   bash projects/detector_kit/inference.sh --head det_ir --images /path/to/frames
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detector_kit
+
+# Model: exactly one of the two.
+head: null                 # det_rgb | det_ir: frozen heads in $IRWM_CKPT_ROOT/detection/frozen/<head>/
+ckpt: null                 # a checkpoint written by train.py (best-eNNN.ckpt or last.ckpt)
+
+# Input: exactly one of the two.
+images: null               # folder of .jpg/.jpeg/.png/.bmp/.tif/.tiff (searched recursively)
+split: null                # val | test | train: a FLIR split, scored with COCO mAP
+
+modality: null             # rgb | thermal; default: the modality the model was trained on
+device: auto               # auto (cuda if available) | cuda | cpu
+msda: auto                 # auto | cuda | pytorch
+batch_size: 8
+num_workers: ${cluster.num_workers}
+score_thr: 0.3             # boxes kept in detections.json (images mode) and drawn
+draw: true                 # save copies of the images with boxes drawn, in <run_dir>/vis/
+max_draw: 100              # at most this many drawn images (null = all)

@@ -54,6 +54,7 @@ ir-world-model/
 │   │   ├── conf/               # Hydra configs
 │   │   └── *.py                # @hydra.main entry points
 │   ├── detection/              # F7: head benchmark; F8: train/eval DINO-DETR heads
+│   ├── detector_kit/           # train.sh / inference.sh: the F8 detector for collaborators, no compiled ops needed
 │   ├── wm_eval/                # DINO-Foresight zero-shot rollouts + evaluation
 │   └── wm_adaptation/          # Phase 4 unsupervised adaptation experiments
 ├── third_party/
@@ -87,7 +88,7 @@ Fixed to match DINO-Foresight. Items marked *(F1)* are confirmed by the F1 audit
 - **Fused attention *(F7)*:** `irwm.features.encoder.set_attention(backbone, "sdpa")` swaps the hub attention for `F.scaled_dot_product_attention` (FlashAttention-2 / memory-efficient backends), same weights; `"plain"` restores it bit-exactly. L4, 448×560: fp16 37.0 → 90.4 frames/s (2.44×, B = 64), peak memory −65 %; fp32 1.32×. Not bit-exact: SDPA vs plain in fp16 has mean token cosine 0.9999982, below the plain encoder's own fp16-vs-fp32 drift (0.999995). Equivalence tests stay on `plain`; whether training uses SDPA is a per-spec decision. In the thesis, the baseline is "the pinned DINOv2 code's unfused attention fallback (no xFormers)", not DINOv2's intended xFormers setup.
 
 ### 3.2 Detector: DINO-DETR head (ported)
-- DINO-DETR (Zhang et al., 2022) is **detrex's own `dino_vitdet`**, run from the pinned, unmodified detrex submodule (§1, §2), as FlowWM does. **detrex and detectron2 are runtime dependencies** (user decision 2026-10-23, F7). The ViT backbone is replaced by `FeatureStem` (LayerNorm + Linear C → 768), so everything from the simple feature pyramid on keeps ViTDet-B's shapes; every hyperparameter is read from detrex's config file. `DINODetector` wraps it: tensors in, losses (train) or xyxy boxes in encoder-input pixels (eval) out. Training needs CUDA (detrex hard-codes `.cuda()` in denoising). MSDA uses detrex's compiled CUDA op (1.5–2.8× faster than its PyTorch fallback, F7). (DINO-Foresight reports instance segmentation with Mask2Former, but FLIR has boxes only, so we use a box detector.)
+- DINO-DETR (Zhang et al., 2022) is **detrex's own `dino_vitdet`**, run from the pinned, unmodified detrex submodule (§1, §2), as FlowWM does. **detrex and detectron2 are runtime dependencies** (user decision 2026-10-23, F7). The ViT backbone is replaced by `FeatureStem` (LayerNorm + Linear C → 768), so everything from the simple feature pyramid on keeps ViTDet-B's shapes; every hyperparameter is read from detrex's config file. `DINODetector` wraps it: tensors in, losses (train) or xyxy boxes in encoder-input pixels (eval) out. Training needs CUDA (detrex hard-codes `.cuda()` in denoising). MSDA uses detrex's compiled CUDA op (1.5–2.8× faster than its PyTorch fallback, F7). Where the op is missing (built without `nvcc`, or no `_C`), `detrex_adapter.select_msda("auto")` switches to the fallback at runtime; `projects/detector_kit` does this, `projects/detection` still requires the compiled op. (DINO-Foresight reports instance segmentation with Mask2Former, but FLIR has boxes only, so we use a box detector.)
 - Input is PCA features `[B, 1152, H', W']` (PCA coefficients, single scale), encoded on the fly by the frozen F4 encoder during training (2026-10-15: the F5 cache is deferred) or read from a cache if one is built. The PCA inverse is a fixed linear map, so a learned input projection on the coefficients is equivalent to one on reconstructed features, and we skip reconstruction. The backbone is not part of the module.
 - Trained with Lightning + Hydra. **One head per modality**: `det_rgb` and `det_ir`.
 - The head is trained on `train` and selected on `val`. It is then **frozen** and reused, unchanged, for oracle and world-model evaluation.
@@ -146,7 +147,7 @@ Location: `$IRWM_CACHE_ROOT/predictions/<wm_tag>/<modality>/<clip_set>.h5`, with
 - Checkpoints go in `$IRWM_CKPT_ROOT/<project>/<run_name>/`. Lightning `last.ckpt` is always saved so SLURM requeues can resume.
 - Frozen detector exports: `$IRWM_CKPT_ROOT/detection/frozen/<name>/{head.pt, meta.json}`. `head.pt` holds only the `detr.*` state dict (no encoder); `meta.json` records `modality`, `precision`, `source_ckpt` (relative to `$IRWM_CKPT_ROOT`), `epoch`, `global_step`, `val_metrics`, `detector`, `encoder` (incl. `attention`, `encoder_tag`), `image_size`, `head_sha256`, `git`, `created_at`. Exports are write-once (`overwrite=True` to replace). Training checkpoints in `$IRWM_CKPT_ROOT/detection/slurm-<job>/` (`best-eNNN.ckpt`, `last.ckpt`) never contain `encoder.*` keys *(F8)*.
 - Hydra run dirs go in `$IRWM_OUTPUT_ROOT/<project>/${now:%Y-%m-%d}/${now:%H-%M-%S}`, and multirun sweeps under `.../multirun/`.
-- **Saved detections of the frozen heads** *(F15, planned)*: `$IRWM_OUTPUT_ROOT/detection/detections/<encoder_tag>/<head>/<modality>_<split>.json.gz`.
+- **Saved detections of the frozen heads** *(F15)*: `$IRWM_OUTPUT_ROOT/detection/detections/<encoder_tag>/<head>/<modality>_<split>.json.gz`. Every frame holds exactly 300 boxes (DINO top-k), ≈ 15–19 MB per file.
   - Contents: gzipped JSON with the COCO results list (all ≤ 300 boxes per frame, FLIR px), the head and encoder provenance, and per-image `video_id`/`frame_index` plus the split's `video_tags`.
   - Write-once: an existing file is replaced only with `overwrite=true`.
   - Written and read only through `irwm.detection.inference` (`save_detections` / `load_detections`). Consumers re-score with `coco_map` instead of running inference again.
@@ -218,9 +219,11 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Frozen heads: `frozen_dir`, `export_frozen`, `frozen_meta`, `load_frozen_detector` | `lib/irwm/detection/frozen.py` | F8 | ✓ |
 | Detection project: `train.py` (50-epoch runs + overfit mode, `experiment=det_rgb/det_ir`), `export.py` (best `val/AP` checkpoint → frozen head) | `projects/detection/` | F8 | ✓ (hpc-gpu5/6, L4) |
 | Frozen detectors `det_rgb` (AP 0.302, SHA `96db5065…`) and `det_ir` (AP 0.330, SHA `2ff38732…`) | `$IRWM_CKPT_ROOT/detection/frozen/` | F8 | ✓ |
-| Multi-head inference on a `FlirSplit` (encode once, N frozen heads), shared-encoder check, person + car AP, detections file (`save_detections`/`load_detections`/`detections_path`) | `lib/irwm/detection/inference.py` | F15 | ☐ |
-| Cross-modal 2×2 entry point (`transfer.py`, `conf/transfer.yaml`) | `projects/detection/` | F15 | ☐ |
-| Saved test detections of `det_rgb`/`det_ir` on both modalities | `$IRWM_OUTPUT_ROOT/detection/detections/` | F15 | ☐ |
+| Multi-head inference on a `FlirSplit` (encode once, N frozen heads), shared-encoder check, person + car AP, detections file (`save_detections`/`load_detections`/`detections_path`) | `lib/irwm/detection/inference.py` | F15 | ✓ (V100S, re-score \|Δ\| = 0) |
+| Cross-modal 2×2 entry point (`transfer.py`, `conf/transfer.yaml`) | `projects/detection/` | F15 | ✓ (hpc-gpu1) |
+| MSDA selection without compiled ops: `select_msda` (auto/cuda/pytorch), `use_pytorch_msda` (moved from `head_bench.py`), `detrex._C` stand-in when it cannot load; `cuda_ops_available` probes the compiled op directly | `lib/irwm/detection/detrex_adapter.py` | kit | ✓ (GTX 1050 Ti, PyTorch MSDA) |
+| Detector kit for collaborators: `train.sh` / `inference.sh` (+ `_common.sh` first-run setup), `train.py` (F8 recipe, CSV + optional W&B), `inference.py` (image folder or FLIR split + mAP, frozen head or own checkpoint), README | `projects/detector_kit/` | kit | ✓ (GTX 1050 Ti, PyTorch MSDA) |
+| Saved test detections of `det_rgb`/`det_ir` on both modalities | `$IRWM_OUTPUT_ROOT/detection/detections/` | F15 | ✓ (4 files, SHA-256 in results.md) |
 | COCO evaluator (6-class AP/AP50 with ignore regions, per-horizon, CIs) | `lib/irwm/eval/` | F6 | ☐ |
 | DINO-Foresight adapter + prediction cache | `lib/irwm/worldmodel/` | F10–F11 | ☐ |
 | Pinned artefacts (HF rev `9174a31e`, DINOv2 hub commits, SHA-256 manifests, `$IRWM_CKPT_ROOT/{dino_foresight,torch_hub}` layout) | `lib/irwm/worldmodel/assets.py` | F1 | ✓ (manifests verified on ctcomp3) |

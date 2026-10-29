@@ -1,0 +1,44 @@
+# Train one DINO-DETR head on FLIR features encoded on the fly by the frozen DINOv2-Reg + PCA encoder.
+# Same recipe as projects/detection/conf/train.yaml (F8, spec/2026-10-26-detector-training-pipeline,
+# deviations E1-E6 there). Normally launched through train.sh, which maps its flags to these keys:
+#   bash projects/detector_kit/train.sh --modality thermal
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detector_kit
+modality: ???              # rgb | thermal
+msda: auto                 # auto | cuda | pytorch (irwm.detection.detrex_adapter.select_msda)
+
+data:
+  batch_size: 16           # F8 value; lower it on GPUs with < 24 GB
+  num_workers: ${cluster.num_workers}
+  flip_p: 0.5
+
+optim:
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 1.0e-4
+  backbone_lr_factor: 1.0
+  lr_drop_fraction: 0.8    # lr x0.1 from epoch round(0.8 * max_epochs): F8's 40 of 50
+
+trainer:
+  max_epochs: 50
+  precision: 16-mixed
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.1
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 50
+  limit_train_batches: null    # train.sh --quick sets a few batches for a setup check
+  limit_val_batches: null
+
+encoder:
+  attention: sdpa          # what det_rgb/det_ir were trained with
+
+wandb:
+  mode: ${oc.env:WANDB_MODE,disabled}   # train.sh --wandb sets online; metrics.csv is always written
+  tags: [detector_kit]

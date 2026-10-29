@@ -1,0 +1,12 @@
+[project]
+name = "irwm-detector-kit"
+version = "0.1.0"
+description = "Ready-to-use DINO-DETR training and inference on frozen DINOv2-Reg features (wraps F8/F15), runs without detrex's compiled CUDA ops."
+requires-python = ">=3.11,<3.12"
+dependencies = ["irwm"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+irwm = { workspace = true }
