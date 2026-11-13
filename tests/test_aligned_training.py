@@ -541,7 +541,7 @@ class TestLauncher:
             assert "IRWM_STAGE_DATA=1" in ln and "IRWM_STAGE_DATASETS=aligned/align" in ln
             assert f"aligned={head}" in ln and f"--job-name=irwm-{head} " in ln
             assert "projects/detection/train_aligned.py" in ln and "--gres=gpu:1 " in ln
-            assert ("--time=720" if "_mae_" in head else "--time=360") in ln
+            assert ("--time=360" if "_mae_" in head else "--time=210") in ln
             assert "--cpus-per-task=8" in ln and "smoke.enabled" not in ln
 
     def test_dry_run_smoke_subset_mae_gres(self, irwm_env):

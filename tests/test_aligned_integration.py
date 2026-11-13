@@ -239,3 +239,18 @@ def test_train_export_eval_chain(tmp_path):
     bad = subprocess.run([sys.executable, "projects/detection/eval_aligned.py", "heads=[det_ir]", "msda=auto",
                           "max_images=2"], cwd=REPO, env=env, capture_output=True, text=True, timeout=600)
     assert bad.returncode != 0
+
+
+# --------------------------------------------------------------------------- parallel SLURM jobs
+def test_parallel_slurm_jobs_get_distinct_run_dirs(irwm_env, monkeypatch):
+    """Two jobs starting in the same second must not share a Hydra run dir (2026-11-13 smoke collision)."""
+    from hydra import compose, initialize_config_dir
+
+    dirs = []
+    for job in ("5531159", "5531160"):
+        monkeypatch.setenv("SLURM_JOB_ID", job)
+        with initialize_config_dir(config_dir=str(CONF), version_base="1.3"):
+            cfg = compose("train_aligned", overrides=["aligned=aligned_dino3072_rgb", "cluster=ctcomp3"],
+                          return_hydra_config=True)
+        dirs.append(str(cfg.hydra.run.dir).rsplit("/", 1)[-1])
+    assert dirs[0] != dirs[1] and dirs[0].endswith("slurm-5531159") and dirs[1].endswith("slurm-5531160")

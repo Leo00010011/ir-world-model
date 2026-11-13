@@ -17,7 +17,9 @@ seed: 0
 
 hydra:
   run:
-    dir: ${paths.output_root}/${project}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    # run_name (slurm-<job id> on SLURM) keeps parallel jobs that start in the same second apart
+    # (2026-11-13: two aligned smoke jobs shared 16-28-04 and one smoke.json overwrote the other).
+    dir: ${paths.output_root}/${project}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${run_name}
   sweep:
     dir: ${paths.output_root}/${project}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}

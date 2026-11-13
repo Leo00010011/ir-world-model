@@ -13,8 +13,15 @@
 # Every job stages aligned FLIR v1 to node-local scratch (IRWM_STAGE_DATA=1,
 # IRWM_STAGE_DATASETS="aligned/align", slurm/stage_data.sh) and records the GPU it ran on.
 # Per-head resources (env overrides in brackets):
-#   dinopca / dino3072: gpu:1 [DINO_GRES], 360 min [DINO_TIME], 8 cpus / 8 workers, 32 GB
-#   mae               : [MAE_GRES], 720 min [MAE_TIME], 8 cpus / 8 workers, 48 GB [MAE_MEM]
+#   dinopca / dino3072: gpu:1 [DINO_GRES], 210 min [DINO_TIME], 8 cpus / 8 workers, 32 GB
+#   mae               : [MAE_GRES], 360 min [MAE_TIME], 8 cpus / 8 workers, 48 GB [MAE_MEM]
+# Time limits are sized for the WORST GPU a job can land on, an L4 (2026-11-13, from the cluster smoke):
+#   full run = 20 epochs x 231 steps = 4,620 steps (+ 20 validations of 413 frames, staging, startup).
+#   DINO: L4 1.52 s/step (F8, measured) -> 1.95 h train, ~2.3 h total, x1.5 margin -> 210 min
+#         (smoke: V100S 0.73 s/step, A100 0.49 s/step).
+#   MAE : A100 0.86 s/step (smoke); L4 ~3.1x slower (A100->L4 ratio seen for DINO) -> ~2.7 s/step,
+#         3.5 h train, ~3.8 h total, x1.5 margin -> 360 min. Peak 19.7 GiB (act checkpointing): fits 24 GB.
+#   The USR1 -> requeue -> resume path is untested on the cluster (F8), so do not rely on it.
 # Any GPU at least as fast as an L4 is fine for the DINO heads: never pin them to a GPU type.
 #
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -75,9 +82,9 @@ fi
 declare -a summary=() job_ids=()
 for h in "${heads[@]}"; do
     if [[ "${h}" == aligned_mae_* ]]; then
-        gres="${MAE_GRES:-gpu:1}"; time_min="${MAE_TIME:-720}"; mem="${MAE_MEM:-48}"
+        gres="${MAE_GRES:-gpu:1}"; time_min="${MAE_TIME:-360}"; mem="${MAE_MEM:-48}"
     else
-        gres="${DINO_GRES:-gpu:1}"; time_min="${DINO_TIME:-360}"; mem="${DINO_MEM:-32}"
+        gres="${DINO_GRES:-gpu:1}"; time_min="${DINO_TIME:-210}"; mem="${DINO_MEM:-32}"
     fi
     [[ "${smoke}" == "1" ]] && time_min="${SMOKE_TIME:-45}"
     overrides=("aligned=${h}" "cluster.gres='${gres}'" "cluster.timeout_min=${time_min}"
