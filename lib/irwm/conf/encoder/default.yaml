@@ -3,6 +3,10 @@
 # native = centre crop to 5:4, then resize to 448x560 (32x40 tokens; thermal 640x512 is never
 # cropped). 2.1x faster encoding than stretch for a 0.5-1.9 % higher forecast ratio (F4 probe).
 policy: native
+# kind (F17 backbone ablation, TechStack §3.1b): dinopca = 1152-d PCA coefficients (the world model's
+# space, default); dino3072 = the 3072-d concat without PCA (pair it with detector.in_channels: 3072,
+# detector.in_proj: 1152). Built by irwm.features.encoder.frozen_encoder_from_config.
+kind: dinopca
 precision: fp16           # fp16 = CUDA autocast as the reference 16-mixed; fp32 for diagnostics
 hub_version: dinof_release  # DINOv2 hub code pinned in irwm.worldmodel.assets
 # plain = the pinned hub attention (reference, bit-exact, F4); sdpa = fused kernels (F7, not bit-exact).

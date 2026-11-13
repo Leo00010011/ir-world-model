@@ -7,6 +7,8 @@ the PIL image, ``ToTensor``, ``Normalize``. Resolution policies (Roadmap R5, sti
 - ``stretch``: the full frame resized to 448×896. This *is* the reference transform.
 - ``crop``: centre 2:1 band, then 448×896. A deviation from the reference.
 - ``native``: centre 5:4 crop, then 448×560 (32×40 tokens). A deviation; never crops thermal.
+- ``native640``: centre 5:4 crop, then 512×640 (32×40 tokens of 16 px) for the end-to-end ViTDet
+  ``mae`` detector (TechStack §3.1b). On aligned FLIR (640×512) it is an identity crop and resize.
 
 Only deterministic centre crops: training augmentation belongs to F8. Runs per image on the
 CPU (DataLoader workers); the encoder (``irwm.features.encoder``) takes the batched output.
@@ -25,10 +27,12 @@ from torch import Tensor
 
 from irwm.worldmodel.reference import IMAGENET_MEAN, IMAGENET_STD, center_crop_box
 
-Policy = Literal["stretch", "crop", "native"]
+Policy = Literal["stretch", "crop", "native", "native640"]
 _Modality = Literal["rgb", "thermal"]
-POLICY_SIZE: dict[Policy, tuple[int, int]] = {"stretch": (448, 896), "crop": (448, 896), "native": (448, 560)}
-_CROP_ASPECT: dict[Policy, tuple[int, int] | None] = {"stretch": None, "crop": (2, 1), "native": (5, 4)}
+POLICY_SIZE: dict[Policy, tuple[int, int]] = {"stretch": (448, 896), "crop": (448, 896), "native": (448, 560),
+                                     "native640": (512, 640)}
+_CROP_ASPECT: dict[Policy, tuple[int, int] | None] = {"stretch": None, "crop": (2, 1), "native": (5, 4),
+                                                       "native640": (5, 4)}
 
 
 @dataclass(frozen=True)

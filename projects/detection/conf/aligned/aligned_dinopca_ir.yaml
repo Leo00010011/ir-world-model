@@ -1,0 +1,12 @@
+# @package _global_
+# Frozen DINOv2-Reg + Cityscapes PCA (1152-d): the world model's feature space, = det_rgb/det_ir encoder.
+modality: thermal
+name: aligned_dinopca_ir
+encoder:
+  kind: dinopca
+  policy: native           # 448x560, 32x40 tokens
+detector:
+  in_channels: 1152
+  in_proj: null
+wandb:
+  tags: [aligned, aligned_dinopca_ir, dinopca, ir]

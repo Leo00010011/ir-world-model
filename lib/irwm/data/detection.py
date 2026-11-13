@@ -13,6 +13,10 @@ default), with its 6-class boxes mapped into the encoder input as xyxy pixels by
 - **Augmentation:** horizontal flip only, on the preprocessed image before the encoder.
 
 Frame selection uses metadata only (``Preprocess.geometry``), so no image is decoded in ``__init__``.
+
+Aligned FLIR v1 (F18): ``FlirDetectionDataset`` also takes an ``irwm.data.aligned.AlignedSplit``
+(duck-typed; its pixels come from ``split.image_dataset()``), and ``AlignedDetectionDataModule``
+loads aligned train / aligned val (person + car, no ignore regions). FLIR v2 behaviour is unchanged.
 """
 
 from __future__ import annotations
@@ -38,7 +42,11 @@ def _kept_boxes(pre: Preprocess, r: FlirRecord) -> tuple[np.ndarray, np.ndarray]
 
 
 class FlirDetectionDataset(Dataset):
-    """Frames of one ``FlirSplit`` → ``{"image" [3, H, W], "boxes" [N, 4] xyxy px, "labels" [N], ...}``."""
+    """Frames of one ``FlirSplit`` → ``{"image" [3, H, W], "boxes" [N, 4] xyxy px, "labels" [N], ...}``.
+
+    Any split object with ``modality``, ``split``, ``records`` and ``by_image_id`` works; one with an
+    ``image_dataset()`` method (``AlignedSplit``) supplies its own pixel reader.
+    """
 
     def __init__(self, split: FlirSplit, *, policy: Policy = "native", flip_p: float = 0.0,
                  filter_empty: bool = False, image_ids: Sequence[int] | None = None) -> None:
@@ -48,7 +56,9 @@ class FlirDetectionDataset(Dataset):
         self.policy = policy
         self.flip_p = flip_p
         self.preprocess = Preprocess(policy, split.modality)
-        self._images = FlirImageDataset(split)  # decoding + mode/size checks (F2), no transform
+        image_dataset = getattr(split, "image_dataset", None)
+        # decoding + mode/size checks (F2 / F16), no transform
+        self._images = image_dataset() if callable(image_dataset) else FlirImageDataset(split)
         position = {r.image_id: i for i, r in enumerate(split.records)}
 
         if image_ids is None:
@@ -106,7 +116,7 @@ def first_nonempty_ids(split: FlirSplit, n: int, policy: Policy = "native") -> l
     """The first ``n`` ``image_id``s (ascending) with ≥ 1 kept box after the ``policy`` mapping."""
     ids = FlirDetectionDataset(split, policy=policy, filter_empty=True)._image_ids()
     if n > len(ids):
-        raise ValueError(f"asked for {n} non-empty frames, FLIR {split.modality}/{split.split} has {len(ids)}")
+        raise ValueError(f"asked for {n} non-empty frames, {split.modality}/{split.split} has {len(ids)}")
     return ids[:n]
 
 
@@ -153,3 +163,32 @@ class FlirDetectionDataModule(L.LightningDataModule):
 
     def val_dataloader(self) -> DataLoader:
         return self._loader(self.val_set, train=False)
+
+
+class AlignedDetectionDataModule(FlirDetectionDataModule):
+    """Aligned FLIR v1 (F16/F18): aligned train (flip, empty frames dropped) and aligned val, plus its COCO GT.
+
+    Same loaders and arguments as ``FlirDetectionDataModule``; ``val_split="train"`` with
+    ``val_image_ids`` validates on train frames (smoke / overfit mode). ``root`` defaults to
+    ``irwm.data.aligned.aligned_root()``; ``val_file`` defaults to the committed val-ids file. The GT
+    has categories ``{1: person, 2: car}`` and no crowd.
+    """
+
+    def __init__(self, *, root=None, val_file=None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.root = root
+        self.val_file = val_file
+
+    def setup(self, stage: str | None = None) -> None:
+        if self.train_set is not None:
+            return
+        from irwm.data.aligned import AlignedSplit
+
+        load = dict(root=self.root, **({} if self.val_file is None else {"val_file": self.val_file}))
+        train_split = AlignedSplit.load(self.modality, "train", **load)
+        val_split = train_split if self.val_split == "train" else AlignedSplit.load(self.modality, "val", **load)
+        self.train_set = FlirDetectionDataset(train_split, policy=self.policy, flip_p=self.flip_p,
+                                              filter_empty=True, image_ids=self.train_image_ids)
+        self.val_set = FlirDetectionDataset(val_split, policy=self.policy, flip_p=0.0,
+                                            filter_empty=False, image_ids=self.val_image_ids)
+        self.val_gt = val_split.subset(self.val_set._image_ids()).to_coco_gt("normalised")

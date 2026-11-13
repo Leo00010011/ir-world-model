@@ -149,7 +149,8 @@ class TestRootAndConfig:
                 if not f.is_file() or "__pycache__" in f.parts or f.suffix not in {".py", ".yaml", ".toml", ".md"}:
                     continue
                 for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
-                    if "teledyne" in line:
+                    # Code and config only: user docs (.md, e.g. detector_kit/README) must tell people the folder name.
+                    if "teledyne" in line and f.suffix != ".md":
                         hits.append((f.relative_to(REPO).as_posix(), line.strip()))
                     assert "/home/" not in line, f"absolute path in {f}:{i}"
         assert sorted(h[0] for h in hits) == ["lib/irwm/conf/flir/default.yaml", "lib/irwm/data/flir.py"]

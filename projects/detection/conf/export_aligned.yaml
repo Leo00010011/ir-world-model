@@ -1,0 +1,16 @@
+# Export the best checkpoint of a finished aligned training run (F18) as a frozen head. CPU only:
+#   uv run python projects/detection/export.py --config-name export_aligned aligned=aligned_mae_ir source_run=slurm-<job id>
+# aligned_mae_* go through irwm.detection.frozen_vitdet (full model), the DINO heads through irwm.detection.frozen.
+defaults:
+  - irwm_base
+  - _self_
+  - aligned: ???
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detection
+dataset: aligned_v1
+source_run: ???            # run name under ${paths.ckpt_root}/detection/
+overwrite: false

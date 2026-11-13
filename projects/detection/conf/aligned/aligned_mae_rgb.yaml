@@ -1,0 +1,17 @@
+# @package _global_
+# detrex stock DINO-ViTDet, MAE-initialised ViT-B/16, fine-tuned end to end (layer-wise lr decay 0.7,
+# activation checkpointing; irwm.detection.vitdet). Its SLURM job asks for the largest GPU (MAE_GRES in
+# slurm/train_aligned.sh). Checkpoints and the export keep every weight.
+defaults:
+  - override /detector: vitdet_mae
+modality: rgb
+name: aligned_mae_rgb
+encoder:
+  kind: mae
+  policy: native640        # 512x640, 32x40 tokens of 16 px: the ONE source of the ViTDet input size
+  encoder_tag: mae_vitb16_512x640_vitdet-ft
+detector:
+  arch: vitdet_mae
+  preprocess_policy: ${encoder.policy}
+wandb:
+  tags: [aligned, aligned_mae_rgb, mae, rgb]

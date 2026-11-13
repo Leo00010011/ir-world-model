@@ -1,10 +1,16 @@
-"""Frozen DINO-DETR heads ``det_rgb`` / ``det_ir``: export from a Lightning checkpoint, and loader.
+"""Frozen DINO-DETR heads: export from a Lightning checkpoint, and loader.
 
-Spec: spec/2026-10-26-detector-training-pipeline (FR6). Layout::
+Spec: spec/2026-10-26-detector-training-pipeline (FR6). Names: ``det_rgb`` / ``det_ir`` (FLIR v2)
+and, for the aligned FLIR v1 backbone ablation (F18, Roadmap Phase 2b),
+``aligned_{dinopca,dino3072,mae}_{rgb,ir}`` (``ir`` → modality ``thermal``). Layout::
 
     $IRWM_CKPT_ROOT/detection/frozen/<name>/
     ├── head.pt     # DINODetector state_dict (keys "detr.*"), fp32 master weights of 16-mixed training
-    └── meta.json   # modality, precision "16-mixed", source checkpoint, val metrics, hyperparameters, SHA-256
+    └── meta.json   # modality, dataset, precision "16-mixed", source checkpoint, val metrics, hyperparameters, SHA-256
+
+``meta["dataset"]`` is ``"flir_v2"`` or ``"aligned_v1"``; metas written before it existed are
+FLIR v2 (``frozen_meta`` fills the default). ``aligned_mae_*`` heads (detrex's stock ViTDet,
+``meta["detector"]["arch"] == "vitdet_mae"``) are not ``DINODetector``s and have their own loader.
 
 ``head.pt`` stays fp32: casting it to fp16 would export a head that differs from the validated one.
 Every consumer (F9, F12) runs it under CUDA fp16 autocast and encodes with the ``meta["encoder"]``
@@ -21,14 +27,20 @@ from pathlib import Path
 import torch
 
 from irwm.detection.detector import DINODetector
-from irwm.features.encoder import encoder_tag
+from irwm.features.encoder import ENCODER_CHANNELS, encoder_tag
 from irwm.features.preprocess import POLICY_SIZE
 from irwm.utils.paths import ckpt_root
 from irwm.utils.tracking import git_info
 
-FROZEN_NAMES: tuple[str, ...] = ("det_rgb", "det_ir")
-FROZEN_MODALITY: dict[str, str] = {"det_rgb": "rgb", "det_ir": "thermal"}
+ALIGNED_BACKBONES: tuple[str, ...] = ("dinopca", "dino3072", "mae")
+_SUFFIX_MODALITY: dict[str, str] = {"rgb": "rgb", "ir": "thermal"}
+FROZEN_NAMES: tuple[str, ...] = ("det_rgb", "det_ir") + tuple(
+    f"aligned_{b}_{m}" for b in ALIGNED_BACKBONES for m in _SUFFIX_MODALITY)
+FROZEN_MODALITY: dict[str, str] = {n: _SUFFIX_MODALITY[n.rsplit("_", 1)[1]] for n in FROZEN_NAMES}
+FROZEN_DATASET: dict[str, str] = {n: "aligned_v1" if n.startswith("aligned_") else "flir_v2" for n in FROZEN_NAMES}
+DATASETS: tuple[str, ...] = ("flir_v2", "aligned_v1")
 PRECISION = "16-mixed"
+MAE_ARCH = "vitdet_mae"
 _PREFIX = "detector."
 
 
@@ -56,12 +68,19 @@ def _val_metrics(ckpt: dict) -> dict | None:
     return json.loads(path.read_text()) if path.is_file() else None
 
 
-def export_frozen(name: str, ckpt_path: Path, *, overwrite: bool = False) -> Path:
+def export_frozen(name: str, ckpt_path: Path, *, overwrite: bool = False, dataset: str | None = None) -> Path:
     """Write ``head.pt`` + ``meta.json`` of ``name`` from a ``DetectorModule`` checkpoint; returns the dir.
 
     Same ``head.pt`` bytes already there → no-op. Different bytes → ``FileExistsError`` unless ``overwrite``.
+    ``dataset`` (``"flir_v2"`` | ``"aligned_v1"``) defaults to the one the name implies and must match it.
     """
     out = frozen_dir(name)
+    expected = FROZEN_DATASET[name]
+    dataset = expected if dataset is None else dataset
+    if dataset not in DATASETS:
+        raise ValueError(f"Unknown dataset {dataset!r}; expected one of {list(DATASETS)}")
+    if dataset != expected:
+        raise ValueError(f"head {name!r} belongs to dataset {expected!r}, got dataset={dataset!r}")
     ckpt_path = Path(ckpt_path).resolve()
     ckpt = torch.load(ckpt_path, map_location="cpu")
     state = {k[len(_PREFIX):]: v for k, v in ckpt["state_dict"].items() if k.startswith(_PREFIX)}
@@ -83,10 +102,13 @@ def export_frozen(name: str, ckpt_path: Path, *, overwrite: bool = False) -> Pat
 
     hp = ckpt["hyper_parameters"]
     encoder = dict(hp["encoder"])
-    encoder["encoder_tag"] = encoder_tag(encoder["policy"])
+    kind = encoder.get("kind", "dinopca")
+    if "encoder_tag" not in encoder or kind in ENCODER_CHANNELS:  # non-DINO backbones bring their own tag
+        encoder["encoder_tag"] = encoder_tag(encoder["policy"], kind)
     meta = {
         "name": name,
         "modality": FROZEN_MODALITY[name],
+        "dataset": dataset,
         "precision": PRECISION,
         "source_ckpt": ckpt_path.relative_to(ckpt_root()).as_posix(),
         "epoch": int(ckpt["epoch"]),
@@ -104,13 +126,21 @@ def export_frozen(name: str, ckpt_path: Path, *, overwrite: bool = False) -> Pat
 
 
 def frozen_meta(name: str) -> dict:
-    """``meta.json`` of a frozen detector."""
-    return json.loads((frozen_dir(name) / "meta.json").read_text())
+    """``meta.json`` of a frozen detector (``dataset`` defaults to ``"flir_v2"`` for older metas)."""
+    meta = json.loads((frozen_dir(name) / "meta.json").read_text())
+    meta.setdefault("dataset", "flir_v2")
+    return meta
 
 
 def load_frozen_detector(name: str, *, device: str | torch.device = "cpu") -> DINODetector:
     """The frozen ``DINODetector`` of ``name``: SHA-256 checked, strict load, ``eval()``, no grad."""
     meta = frozen_meta(name)
+    arch = meta["detector"].get("arch")
+    if arch == MAE_ARCH:
+        raise ValueError(f"{name!r} is a {MAE_ARCH!r} head (detrex's stock ViTDet), not a DINODetector; "
+                         "load_frozen_detector cannot build it, use the MAE loader")
+    if arch is not None:
+        raise ValueError(f"{name!r}: unknown detector arch {arch!r} in meta.json")
     head = frozen_dir(name) / "head.pt"
     sha = _sha256(head)
     if sha != meta["head_sha256"]:

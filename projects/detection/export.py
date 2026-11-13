@@ -1,8 +1,10 @@
-"""Export the best checkpoint of a finished training run as a frozen head (``det_rgb`` / ``det_ir``).
+"""Export the best checkpoint of a finished training run as a frozen head.
 
 CPU only (the cluster login node is fine)::
 
     uv run python projects/detection/export.py experiment=det_rgb source_run=slurm-<job id>
+    # aligned FLIR v1 heads (F18); aligned_mae_* keep the whole fine-tuned ViTDet (irwm.detection.frozen_vitdet)
+    uv run python projects/detection/export.py --config-name export_aligned aligned=aligned_mae_ir source_run=slurm-<job id>
 
 Takes the single ``best-e*.ckpt`` in ``${paths.ckpt_root}/detection/<source_run>/`` and writes
 ``$IRWM_CKPT_ROOT/detection/frozen/<name>/{head.pt, meta.json}`` (``irwm.detection.frozen``).
@@ -16,7 +18,8 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig
 
-from irwm.detection.frozen import export_frozen, frozen_meta
+from irwm.detection.frozen import FROZEN_DATASET, export_frozen, frozen_meta
+from irwm.detection.frozen_vitdet import MAE_NAMES, export_frozen_vitdet
 from irwm.utils.paths import load_env
 
 load_env()
@@ -32,10 +35,17 @@ def pick_best_ckpt(run_ckpt_dir: Path) -> Path:
     return found[0]
 
 
+def export_head(name: str, ckpt: Path, *, overwrite: bool = False) -> Path:
+    """Route ``name`` to its exporter: ``aligned_mae_*`` → full ViTDet, otherwise a ``DINODetector`` head."""
+    if name in MAE_NAMES:
+        return export_frozen_vitdet(name, ckpt, overwrite=overwrite)
+    return export_frozen(name, ckpt, overwrite=overwrite, dataset=FROZEN_DATASET[name])
+
+
 @hydra.main(version_base="1.3", config_path="conf", config_name="export")
 def main(cfg: DictConfig) -> None:
     ckpt = pick_best_ckpt(Path(cfg.paths.ckpt_root) / cfg.project / cfg.source_run)
-    out = export_frozen(cfg.name, ckpt, overwrite=cfg.overwrite)
+    out = export_head(cfg.name, ckpt, overwrite=cfg.overwrite)
     print(f"[export] {cfg.name}: {ckpt} -> {out} | head_sha256 {frozen_meta(cfg.name)['head_sha256']}", flush=True)
 
 

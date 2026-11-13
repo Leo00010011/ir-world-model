@@ -229,7 +229,7 @@ class TestConfig:
         with initialize_config_dir(version_base="1.3", config_dir=str(CONF)):
             cfg = compose(config_name="irwm_base")
         det = OmegaConf.to_container(cfg.detector)
-        assert det == {"in_channels": 1152, "stem_dim": 768, "num_classes": 6, "overrides": {}}
+        assert det == {"in_channels": 1152, "in_proj": None, "stem_dim": 768, "num_classes": 6, "overrides": {}}
         defaults = {k: p.default for k, p in inspect.signature(DINODetector.__init__).parameters.items()
                     if k != "self"}
         assert defaults == {**det, "overrides": None}  # overrides: None in code ≡ {} in YAML

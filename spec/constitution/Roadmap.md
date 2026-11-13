@@ -14,6 +14,8 @@ Status legend: ☐ todo · ◐ in progress · ✓ DONE · ⛔ blocked · ⏸ def
 
 > **2026-10-25 pipeline efficiency (user):** the goal is unchanged: measure the effect of domain shift on world models (Mission). Compute is limited, so an efficient pipeline is a means to that end. Three optimisations were measured on the worst-case GPU (L4) under F7: fused SDPA attention in the encoder, data staged on node-local scratch, and detrex's compiled CUDA MSDA (`spec/2026-10-23-dino-detr-head-port/results.md` §4, §6). They feed F8's budget, and the thesis can report them as supporting engineering results.
 
+> **2026-11-13 aligned FLIR v1 + backbone ablation (user):** new **Phase 2b (F16–F19)**. Detectors are trained and tested on aligned FLIR v1 (person + car), on three frozen backbones (DINOv2+PCA, DINOv2 3072-d, MAE ViT-B/16) × two modalities = **6 heads, each in its own SLURM job** so they run in parallel and get scheduled sooner. Aligned heads are never scored on FLIR v2, and v2 heads never on aligned (different annotation conventions, R12). The Phase 4 draft range moves from "F16+" to "F20+" (no Phase 4 feature had been started). See Mission → Change log.
+
 ---
 
 ## Phase 0: Foundations and gates
@@ -211,6 +213,53 @@ F15 gives preliminary diagonal numbers and saved detections; F9 reuses its infer
 
 ---
 
+## Phase 2b: Aligned FLIR v1 and backbone ablation (H1 paired check, B)
+
+Added 2026-11-13 (user). This phase is a side branch at the detector level and does not block Phase 3. F16 and F17 are independent of each other, F18 needs both, and F19 needs F18. Its order relative to F6 → F9 is the user's call. The aligned dataset is a second dataset, so nothing here changes the FLIR v2 readers, heads or clip set.
+
+> **2026-11-13 build (one session, no spec workflow, user decision):** F16–F19 were built by parallel agents from agreed signatures and checked by `tests/test_aligned_integration.py`. Splits on real data: train 3710 / val 413 / test 1013 (6 ids purged at the cut). Local evidence (GTX 1050 Ti, PyTorch MSDA): 451 default tests + 23 `data`/`gpu` tests pass; the reader's own boxes score AP = 1 through training and eval scoring for both policies; all 6 heads train → auto-export → F19 eval → re-score in one chain; a dinopca overfit (16 frames, batch 1) reaches AP 0.186 at step 400 and rising. **Not verified locally:** MAE learning (out of memory on the 4 GB card at batch 1 with the PyTorch MSDA fallback; one full train step fits at 2.5 GiB) and compiled MSDA: the first cluster smoke run checks both. Note: car = category id 2 does **not** guard against label-map mix-ups (2-way labels under the v2 map also give ids 1/2); R12 is enforced by the `meta["dataset"]` checks in eval.
+
+### F16 · Aligned FLIR v1 readers and splits ✓ DONE (2026-11-13)
+Read-only readers for aligned FLIR v1 at `$IRWM_DATA_ROOT/aligned/align/` (`JPEGImages/FLIR_<id>_PreviewData.jpeg` thermal `L`, `FLIR_<id>_RGB.jpg` RGB, both 640×512; `Annotations/FLIR_<id>_PreviewData.xml` VOC, one file per pair shared by both modalities; the `*_mask.jpg` and `AnnotatedImages/` (boxes drawn on) are not used). Data facts found on 2026-11-13: 5,142 pairs, 4,129 in train and 1,013 in validation, no overlap between them, no empty frames, `difficult` always 0, and 24,732 car, 13,094 person, 2,926 bicycle and 108 dog boxes.
+- **Label space (user, 2026-11-13):** **person and car only**, with its own 2-class label space (person = 0, car = 1) and a **2-way head**. **Bicycle and dog are background**: dropped from targets and GT, with no crowd regions.
+- **Splits:** *aligned val* is a **contiguous block of ids at the end of `align_train.txt`** (≈ 10 %, so neighbouring frames don't leak into it), and the rest is *aligned train*. The aligned test set is `align_validation.txt` (ids 08864–10227). The carve is deterministic, and its ids are committed (like F3's clip set).
+- **API:** the same interface the F8 data module and F15's inference already use (a `FlirSplit`-like object with `to_coco_gt`, and a dataset returning native `uint8` images), so F18/F19 reuse F8/F15 code instead of forking it. Since both modalities share the same boxes, one annotation set serves both. A stats report (counts per split and class, S/M/L on 640×512) goes in the spec.
+- Check the pairing (every id has both JPEGs and the XML) and that the boxes lie inside the frame.
+
+**Done when:** both modalities load for all three splits, the carved val ids are committed and SHA-pinned, the stats are recorded, and `to_coco_gt` passes a pycocotools round-trip test.
+**Depends on:** F2 ✓ (label space, ignore rule).
+
+### F17 · Backbone variants: DINOv2 3072-d and MAE ViT-B/16 ✓ DONE (2026-11-13)
+Add two frozen encoders behind the F4 encoder interface (`encode(...) → [B, H', W', C]`, frozen, fp16 autocast, `no_grad`, its own `encoder_tag`), selected by the `encoder` Hydra group:
+- **DINOv2-Reg, no PCA:** the F4 recipe up to the 3072-d concat (`encode_full`, which exists already), at `native` 448×560 → 32×40 tokens, with SDPA. A **learned `Linear(3072 → 1152)`** (user, 2026-11-13) takes the place of the PCA. It is trained with the head, so the detector keeps `in_channels: 1152` and an identical head (TechStack §3.1b).
+- **MAE ViT-B/16, fine-tuned (user, 2026-11-13):** detrex's stock `dino_vitdet` (ViT-B backbone + simple feature pyramid + DINO head), initialised from MAE (`mae_pretrain_vit_base.pth`) and **trained end to end**, with layer-wise lr decay 0.7 and activation checkpointing. Input is **512×640 → 32×40 tokens** of 16 px. Jobs request the largest available GPU. The ViT is part of the trained model, so checkpoints and exports keep it. (TechStack §3.1b.)
+- The learned projection is part of the trainable detector (saved in `head.pt`), not of the frozen encoder. The spec decides whether it lives in `FeatureStem` (an optional pre-projection) or in a separate module, keeping the `dinopca` heads' `state_dict` unchanged.
+- Thermal is replicated 1→3 with ImageNet normalisation for every backbone, as in F4.
+- A throughput figure (frames/s on the GPU used, with the GPU recorded) for each backbone, so F18 can budget its jobs.
+
+**Done when:** both encoders pass shape, determinism and frozen-weight tests, their weights are pinned by SHA-256 like `irwm.worldmodel.assets`, and throughput is recorded.
+**Depends on:** F4 ✓.
+
+### F18 · Aligned detector training (3 backbones × 2 modalities) ◐ code ready, cluster runs pending
+Train the F7 head with the F8 recipe (`DetectorModule`, `FlirDetectionDataModule`, same augmentation and schedule unless the spec changes them for the smaller dataset) on aligned train, selecting the best aligned-val AP over person + car. **Six heads:** `{dinopca, dino3072, mae}` × `{rgb, ir}`. **Each head runs in its own SLURM job** (one `experiment=` config per head, submitted together), so the six train in parallel and each small request is scheduled faster. No job may assume another has finished. Each job records its GPU (any GPU at least as fast as an L4).
+- The DINO+PCA heads use exactly the encoder of the frozen `det_rgb`/`det_ir` heads (`native`, `sdpa`, 1152-d), so the aligned and v2 results share one feature space.
+- **Schedule (user, 2026-11-13):** **20 epochs, lr 1e-4 for epochs 0–13, then ×0.1 for epochs 14–19.** Both F8 heads peaked around epoch 14 (RGB then overfit, IR plateaued). Validation runs every epoch, keeping the best aligned-val AP.
+- **Budget (estimate, not measured):** F8 took ≈ 14 L4 GPU-hours for 50 epochs over ≈ 10.5k frames, so 20 epochs over ≈ 3.7k frames is ≈ 2 L4 GPU-hours per head if the cost per step holds. The real cost per backbone is measured (MAE at 512×640 encodes more pixels).
+- Frozen exports go under `$IRWM_CKPT_ROOT/detection/frozen/aligned_<backbone>_<modality>/`, with the dataset recorded in `meta.json`.
+
+**Done when:** six frozen heads exist, each with its val AP/AP50 (person + car, per class), GPU and GPU-hours in W&B and in the results note.
+**Depends on:** F7 ✓, F8 ✓, F16, F17.
+
+### F19 · Aligned evaluation: paired H1 and backbone table ◐ code ready, cluster run pending
+Score every F18 head on **both modalities** of the aligned test set (`align_validation`). Since the frames and boxes are identical, every head gets a fair 2×2 (in-domain and cross-modal). This reuses `irwm.detection.inference` (F15) and saves detections the same way.
+- **Result Table B:** AP/AP50 (person + car, per class) by backbone × train modality × test modality, plus the transfer ratios. It answers (i) whether IR beats RGB on paired frames (paired H1), (ii) what the fixed Cityscapes PCA costs each modality against a learned projection to the same 1152 dimensions (dinopca vs dino3072, R7), and (iii) whether DINOv2 beats MAE.
+- No cross-dataset cells (R12). Bootstrap CIs come from F6 if it exists by then; otherwise the numbers are preliminary, as in F15.
+
+**Done when:** the six-head × two-modality table is in the results note and W&B with its JSON, and re-scoring the saved detections reproduces it exactly.
+**Depends on:** F18 (F6 optional).
+
+---
+
 ## Phase 3: Zero-shot world model (H2, H3)
 
 ### F10 · DINO-Foresight adapter ☐
@@ -254,7 +303,7 @@ Set up adaptation without leaking the test set:
 
 **Depends on:** F12.
 
-### F16+ · Adaptation techniques ☐
+### F20+ · Adaptation techniques ☐
 One feature per technique, each evaluated with the F14 harness. Candidates:
 - **PCA re-fit on target-domain (unlabeled) features.** This needs either a mapping into the old basis or an adapted model.
 - **Feature-manifold projection:** map predicted features onto the real-feature manifold with a denoiser or autoencoder trained only on real (unlabeled) features.
@@ -279,4 +328,6 @@ Generalisation check: apply the best technique to RGB and, if feasible, to anoth
 | R8 | DINO-Foresight is **deterministic** (SmoothL1 regression), so predictions may be blurred toward the mean. That is part of what H3 measures, but it also means no sampling and no best-of-N. | F13 |
 | R10 | **Annotation asymmetry between modalities (F2).** On the time-synced test frames, thermal has far fewer boxes than RGB for sign (ratio 0.33), light (0.38) and bike (0.25), while person and car are ≈ 1. Train/val ratios are much closer to 1. So per-class AP for sign/light/bike compares different labelling densities, not just modalities, and an RGB detector is credited for objects the thermal GT never labels. H1/H2 conclusions should be checked on person + car alone, and per-class results reported. **F15:** the cross-modal cells show it. `det_rgb` on IR scores sign AP 0.023 vs 0.070 for `det_ir`, while person + car transfers better (ratio 0.65) than all-class AP (0.61). | F6, F9, F12 |
 | R11 | **Slow tests and startup on the cluster (F4). Cause: BeeGFS. Mitigation ready.** Read-only `data` tests take minutes on ctcomp3: FLIR readers 174 s vs 9 s on ctdesk236 (same code and data), encoder equivalence 92 s. **Staging test** (job 5525147, hpc-node8, 8 CPUs, commit `3a0916d`, `slurm/stage_data_test.sbatch`): the readers' `FlirSplit.load` (6 × `coco.json`, ≈ 260 MB) took **176 s from BeeGFS vs 5.7 s from node-local `$LOCAL_SCRATCH`** (whole run 201 s → 29 s), so the shared filesystem is the cause, not the CPU count. Copying all of FLIR (12 GB, 46 450 files, 6 parallel `tar` streams) to scratch takes **276 s (44 MB/s)**. That is longer than the slow load, so staging does not pay off for a one-off metadata read. It does pay off for anything that reads images every epoch (F8: full read from BeeGFS at that rate is ≥ 4.6 min per pass, and probably much slower with random access). Separate cost: a cold `import torch` from the BeeGFS `.venv` takes **40 s**, and about 20 s of the 29 s scratch run is still imports. That cost is per process and stays even with staged data. **Use:** `source slurm/stage_data.sh` after `slurm/env.sh` at job start. It copies to `$LOCAL_SCRATCH/irwm_data/` (wiped when the job ends), checks the file count and sets `IRWM_DATA_ROOT`. Each requeue pays the copy again. **F8 (2026-10-28): every F8 job stages by default** (`IRWM_STAGE_DATA=1`, user decision 2026-10-26). Measured copies of 46,450 files: 317 s and 312 s (overfits, hpc-gpu5 / hpc-gpu1), 218 s (hpc-gpu5) and 57 s (hpc-gpu6) for the full runs, i.e. 1–5 min against a ≈ 14 h run. **Still open:** copying only the annotation JSONs for metadata-only jobs, and moving the `.venv` (or `$IRWM_CKPT_ROOT` weights) to scratch. **Encoder benchmark (F7, jobs 5525665/5525666, hpc-gpu5, 2026-10-25):** staging via `IRWM_STAGE_DATA=1` copied 46,450 files (12.2 GB) in **283 s (42 MB/s)**. Loader-only with 8 workers: RGB 349 → 478 fps, thermal 952 → 1537 fps (BeeGFS → staged, page cache). End to end with the SDPA encoder: ≈ 89 fps on both, encode share ≥ 0.998. **On an L4, 8 workers on BeeGFS already outpace the encoder 4–11×, so staging gives no end-to-end gain**; it pays only for faster GPUs, fewer workers, or the metadata load at job start (276–283 s copy vs ≈ 170 s saved). | F8 |
+| R12 | **Aligned FLIR v1 and FLIR v2 annotate differently** (2026-11-13). Their class sets, labelling conventions and resolutions differ, and v1's single annotation per pair is shared by both modalities. Scoring an aligned head on v2 (or the reverse) would mostly measure the label mismatch, with many spurious false positives. **Rule:** no cross-dataset scoring. Compare across datasets only through each one's own person + car AP, and with caution. Still open: whether the shared v1 boxes were drawn on the thermal frame, which could favour IR on objects visible only in thermal (check in F16). | F16, F19 |
+| R13 | **Backbone ablation is encoder-level only.** MAE and the 3072-d DINO features cannot feed DINO-Foresight, so B qualifies H1/H3 (how much detection power the world model's feature space has) but cannot test H2. MAE uses patch 16 at 512×640 to match the 32×40 grid, so its input resolution differs from DINO's 448×560. MAE is also **fine-tuned with detrex's stock ViTDet** while DINO is frozen behind our stem, so DINO-vs-MAE compares two recipes, not just two pretrainings. | F17, F19 |
 | R9 | Double domain gap: the model was trained on Cityscapes (German cities, daytime RGB). FLIR RGB is already out of domain, so the RGB sanity check matters before any IR conclusion is drawn. | F10 |

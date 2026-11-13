@@ -5,6 +5,10 @@ input frame to FLIR pixels with ``ResizeGeometry.invert_boxes``, so they are sco
 full-frame FLIR GT, ignore regions as per-category crowd boxes and 640×512-normalised areas (F2).
 ``COCOeval`` runs with its default parameters, as detrex's ``COCOEvaluator`` does. This is a
 selection metric only; the rigorous evaluator (CIs, per horizon) is F6.
+
+Other label spaces (aligned FLIR v1, F18): pass ``label_to_category_id`` to ``to_flir_detections``
+and ``class_names`` to ``coco_map``; per-class category ids are then looked up by name in
+``gt["categories"]``. The defaults are FLIR v2's 6-class space, unchanged.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import contextlib
 import copy
 import io
 import math
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 from pycocotools.coco import COCO
@@ -26,11 +31,14 @@ _STATS = ("AP", "AP50", "AP75", "APs", "APm", "APl")  # COCOeval.stats[0:6]
 
 
 def to_flir_detections(preds: list[dict[str, Tensor]], image_ids: list[int],
-                       geometries: list[ResizeGeometry]) -> list[dict]:
+                       geometries: list[ResizeGeometry], *,
+                       label_to_category_id: Mapping[int, int] | None = None) -> list[dict]:
     """``DINODetector`` eval outputs (xyxy encoder-input px) → COCO result dicts in FLIR px.
 
     All boxes are kept (≤ 300 per image); ``COCOeval``'s ``maxDets`` keeps the top 100.
+    ``label_to_category_id`` maps model labels to GT category ids (default: FLIR v2's map).
     """
+    cat_of = LABEL_TO_CATEGORY_ID if label_to_category_id is None else label_to_category_id
     out = []
     for pred, image_id, geom in zip(preds, image_ids, geometries, strict=True):
         xyxy = pred["boxes"].detach().float().cpu().numpy().reshape(-1, 4)
@@ -39,15 +47,26 @@ def to_flir_detections(preds: list[dict[str, Tensor]], image_ids: list[int],
         scores = pred["scores"].detach().float().cpu().tolist()
         labels = pred["labels"].detach().cpu().tolist()
         for b, s, lab in zip(boxes, scores, labels):
-            out.append({"image_id": int(image_id), "category_id": LABEL_TO_CATEGORY_ID[int(lab)],
+            out.append({"image_id": int(image_id), "category_id": int(cat_of[int(lab)]),
                         "bbox": [float(v) for v in b], "score": float(s)})
     return out
 
 
-def _classes_without_gt(gt: dict) -> set[str]:
+def _category_ids(gt: dict, class_names: Sequence[str] | None) -> dict[str, int]:
+    """``{class name: GT category id}``: FLIR v2's map by default, else looked up by name in ``gt``."""
+    if class_names is None:
+        return {c: LABEL_TO_CATEGORY_ID[k] for k, c in enumerate(CLASS_NAMES)}
+    by_name = {c["name"]: int(c["id"]) for c in gt.get("categories", [])}
+    missing = [c for c in class_names if c not in by_name]
+    if missing:
+        raise KeyError(f"classes {missing} not in gt['categories'] {sorted(by_name)}")
+    return {c: by_name[c] for c in class_names}
+
+
+def _classes_without_gt(gt: dict, cat_ids: Mapping[str, int]) -> set[str]:
     """Classes with no non-crowd GT box: ``COCOeval`` gives them no precision (``-1``)."""
     present = {a["category_id"] for a in gt["annotations"] if not a.get("iscrowd", 0)}
-    return {c for k, c in enumerate(CLASS_NAMES) if LABEL_TO_CATEGORY_ID[k] not in present}
+    return {c for c, cid in cat_ids.items() if cid not in present}
 
 
 def _mean_valid(p: np.ndarray) -> float:
@@ -55,15 +74,19 @@ def _mean_valid(p: np.ndarray) -> float:
     return float(valid.mean()) if valid.size else math.nan
 
 
-def coco_map(gt: dict, detections: list[dict]) -> dict[str, float]:
+def coco_map(gt: dict, detections: list[dict], *,
+             class_names: Sequence[str] | None = None) -> dict[str, float]:
     """``AP``/``AP50``/``AP75``/``APs``/``APm``/``APl`` plus ``AP_<class>``/``AP50_<class>``; stdout suppressed.
 
-    A class with no GT box is ``nan``. Empty ``detections`` give ``0.0`` everywhere else.
+    ``class_names`` (default: FLIR v2's ``CLASS_NAMES``) picks the per-class keys; their category
+    ids are read from ``gt["categories"]`` by name. A class with no GT box is ``nan``. Empty
+    ``detections`` give ``0.0`` everywhere else.
     """
+    cat_ids = _category_ids(gt, class_names)
     if not detections:  # pycocotools' loadRes raises on an empty list
-        missing = _classes_without_gt(gt)
+        missing = _classes_without_gt(gt, cat_ids)
         metrics = {k: 0.0 for k in _STATS}
-        for c in CLASS_NAMES:
+        for c in cat_ids:
             metrics[f"AP_{c}"] = metrics[f"AP50_{c}"] = math.nan if c in missing else 0.0
         return metrics
 
@@ -79,8 +102,8 @@ def coco_map(gt: dict, detections: list[dict]) -> dict[str, float]:
 
     metrics = {k: float(v) for k, v in zip(_STATS, E.stats[:6])}
     p = E.eval["precision"]  # [T=10 IoUs, R=101 recalls, K categories, A=4 areas, M=3 maxDets]
-    for c in CLASS_NAMES:
-        k = E.params.catIds.index(LABEL_TO_CATEGORY_ID[CLASS_NAMES.index(c)])
+    for c, cid in cat_ids.items():
+        k = E.params.catIds.index(cid)
         metrics[f"AP_{c}"] = _mean_valid(p[:, :, k, 0, -1])  # area "all", maxDets 100
         metrics[f"AP50_{c}"] = _mean_valid(p[0, :, k, 0, -1])
     return metrics

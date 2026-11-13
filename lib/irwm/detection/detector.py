@@ -36,9 +36,12 @@ class FeatureDINO(DINO):
         return ImageList.from_tensors([x["image"].to(self.device) for x in batched_inputs])
 
 
-def build_dino_config(*, in_channels: int = 1152, stem_dim: int = 768, num_classes: int = 6,
-                      overrides: Mapping[str, Any] | None = None) -> DictConfig:
+def build_dino_config(*, in_channels: int = 1152, in_proj: int | None = None, stem_dim: int = 768,
+                      num_classes: int = 6, overrides: Mapping[str, Any] | None = None) -> DictConfig:
     """detrex's ``dino_vitdet`` model config with ``FeatureStem`` as ``backbone.net``.
+
+    ``in_proj``: width of the stem's optional learned ``Linear(in_channels → in_proj)`` (F17
+    ``dino3072``: 3072 → 1152); ``None`` (default) builds exactly the original stem.
 
     ``overrides`` are dotted keys relative to ``model`` (``{"transformer.encoder.num_layers": 2}``).
     Unknown keys raise ``KeyError``; keys set by the arguments raise ``ValueError``.
@@ -47,8 +50,10 @@ def build_dino_config(*, in_channels: int = 1152, stem_dim: int = 768, num_class
     model._target_ = FeatureDINO
     # D1. out_feature must be passed explicitly: LazyCall records only given arguments, and the
     # pyramid's in_feature="${.net.out_feature}" (dino_vitdet.py:42) interpolates it.
-    model.backbone.net = LazyCall(FeatureStem)(in_channels=in_channels, embed_dim=stem_dim,
-                                               out_feature="last_feat")
+    stem_args: dict[str, Any] = {"in_channels": in_channels, "embed_dim": stem_dim, "out_feature": "last_feat"}
+    if in_proj is not None:  # recorded only when used, so the default config is unchanged
+        stem_args["proj_channels"] = in_proj
+    model.backbone.net = LazyCall(FeatureStem)(**stem_args)
     model.num_classes = num_classes  # D2
     model.device = "cpu"  # D4: synced to the input on every DINODetector call
 
@@ -88,11 +93,12 @@ class DINODetector(nn.Module):
     dict, eval mode returns per-image ``{"boxes" [K, 4] xyxy px, "scores" [K], "labels" [K]}``.
     """
 
-    def __init__(self, *, in_channels: int = 1152, stem_dim: int = 768, num_classes: int = len(CLASS_NAMES),
-                 overrides: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, *, in_channels: int = 1152, in_proj: int | None = None, stem_dim: int = 768,
+                 num_classes: int = len(CLASS_NAMES), overrides: Mapping[str, Any] | None = None) -> None:
         super().__init__()
         self.in_channels = in_channels
-        self.detr = instantiate(build_dino_config(in_channels=in_channels, stem_dim=stem_dim,
+        self.in_proj = in_proj
+        self.detr = instantiate(build_dino_config(in_channels=in_channels, in_proj=in_proj, stem_dim=stem_dim,
                                                   num_classes=num_classes, overrides=overrides))
 
     def forward(self, feats: Tensor, targets: list[dict[str, Tensor]] | None = None,

@@ -1,0 +1,35 @@
+# F19: every aligned head (F18) on both modalities of the aligned FLIR v1 test split (align_validation,
+# 1013 pairs) -> Result Table B. No cross-dataset cells (Roadmap R12): only aligned_* heads, only aligned data.
+# Any GPU (recorded in eval_aligned.json). Launcher: slurm/eval_aligned.sh (stages aligned/align):
+#   bash slurm/eval_aligned.sh ctcomp3                                   # all six heads
+#   bash slurm/eval_aligned.sh ctcomp3 'heads=[aligned_mae_rgb]'         # a subset
+#   SBATCH_EXTRA="--dependency=afterok:111:222" bash slurm/eval_aligned.sh ctcomp3
+# Detection files are write-once: a rerun stops before loading anything unless overwrite=true.
+defaults:
+  - irwm_base
+  - _self_
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detection
+
+mode: run                  # run: inference + scoring | merge: rebuild eval_aligned.json + table_b.md from the
+                           # saved detection files of `heads` (re-scored, no model, no GPU; combines subset runs)
+
+heads: [aligned_dinopca_rgb, aligned_dinopca_ir, aligned_dino3072_rgb, aligned_dino3072_ir,
+        aligned_mae_rgb, aligned_mae_ir]
+test_modalities: [rgb, thermal]
+split: test                # align_validation.txt: the aligned test set
+batch_size: 16             # no prediction depends on it
+num_workers: ${cluster.num_workers}
+device: cuda
+msda: cuda                 # detrex deformable attention: cuda (compiled ops, required on the cluster) | auto | pytorch
+overwrite: false           # replace existing detection files
+verify_rescore: true       # re-score every saved file from disk; the run fails unless it reproduces the metrics
+log_every: 20              # progress line every N batches (0: off)
+max_images: null           # smoke runs only: first N test pairs (results are then NOT Table B)
+
+wandb:
+  tags: [eval_aligned, F19]

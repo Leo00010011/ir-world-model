@@ -1,0 +1,18 @@
+# End-to-end DINO-ViTDet, `mae` backbone variant (TechStack §3.1b; irwm.detection.vitdet).
+# detrex's stock dino_vitdet (ViT-B/16 + SimpleFeaturePyramid + DINO head), ViT initialised from the
+# pinned MAE ViT-B and fine-tuned end to end. Build with irwm.detection.vitdet.vitdet_from_config(cfg);
+# optimizer groups with vitdet_param_groups(model, **cfg.optim). Deviations V1-V8 in vitdet.py.
+arch: vitdet_mae          # irwm.detection.vitdet.VITDET_META_ARCH (meta.json["detector"]["arch"])
+num_classes: 2            # person, car
+image_hw: [512, 640]      # 32x40 tokens of 16 px; aligned FLIR 640x512 is an identity resize
+preprocess_policy: native640
+use_act_checkpoint: true
+init: mae                 # mae | none
+init_path: null           # null = pinned $IRWM_CKPT_ROOT/pretrained/mae/mae_pretrain_vit_base.pth
+optim:
+  base_lr: 1.0e-4
+  weight_decay: 1.0e-4
+  lr_schedule: layer_decay  # layer_decay (ViTDet, 0.7 over 12 blocks) | flat (detrex, backbone x0.1)
+  layer_decay: 0.7
+  backbone_lr_factor: 0.1   # used by lr_schedule=flat only
+overrides: {}             # dotted keys relative to detrex's `model`, e.g. {backbone.net.depth: 2}

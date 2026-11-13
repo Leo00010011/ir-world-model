@@ -1,0 +1,12 @@
+# @package _global_
+# Frozen DINOv2-Reg, no PCA: 3072-d concat -> learned Linear(3072 -> 1152) trained with the head.
+modality: rgb
+name: aligned_dino3072_rgb
+encoder:
+  kind: dino3072
+  policy: native           # 448x560, 32x40 tokens
+detector:
+  in_channels: 3072
+  in_proj: 1152
+wandb:
+  tags: [aligned, aligned_dino3072_rgb, dino3072, rgb]

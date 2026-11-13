@@ -1,0 +1,63 @@
+# Train one aligned FLIR v1 detector (F18, Roadmap Phase 2b): one of the 6 heads
+# {dinopca, dino3072, mae} x {rgb, ir}, picked by `aligned=<name>` (conf/aligned/<name>.yaml).
+# Each head is its own SLURM job; submit all of them with slurm/train_aligned.sh:
+#   bash slurm/train_aligned.sh ctcomp3            # 6 jobs in parallel
+#   bash slurm/train_aligned.sh ctcomp3 --smoke    # 6 short pipeline checks
+# Recipe = F8 (train.yaml, detrex DINO-ViTDet) with the user's aligned schedule (2026-11-13):
+#   20 epochs, AdamW lr 1e-4 for epochs 0-13, x0.1 for epochs 14-19, validation EVERY epoch,
+#   best aligned-val AP (person + car) checkpoint + last.ckpt. Batch 16, 16-mixed, grad clip 0.1, hflip 0.5.
+# 2-way head (person = 0, car = 1); bicycle / dog are background (irwm.data.aligned drops them).
+# The preprocess policy has ONE source: encoder.policy in the experiment file (native 448x560 for
+# the DINO heads, native640 512x640 for mae). The datamodule, DetectorModule.image_size and the
+# export meta all read it; the ViTDet's image_hw / preprocess_policy are checked against it.
+defaults:
+  - irwm_base
+  - _self_
+  - aligned: ???           # aligned_<dinopca|dino3072|mae>_<rgb|ir>; it overrides the values below
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detection
+dataset: aligned_v1
+modality: ???              # set by the experiment: rgb | thermal
+name: ???                  # = frozen export name
+msda: cuda                 # detrex deformable attention: cuda (compiled op, cluster) | auto | pytorch
+
+data:
+  batch_size: 16
+  num_workers: ${cluster.num_workers}
+  flip_p: 0.5
+
+optim:                     # F8 AdamW (detrex common/optim.py)
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 1.0e-4
+  backbone_lr_factor: 1.0  # DINO heads (F8 E1); the ViTDet reads its own detector.optim (layer decay 0.7)
+  lr_drop_epoch: 14        # x0.1 from epoch 14 (user, 2026-11-13)
+
+trainer:
+  max_epochs: 20
+  precision: 16-mixed
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.1
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 50
+
+encoder:
+  policy: native
+  attention: sdpa          # the encoder of det_rgb / det_ir (TechStack §3.2)
+
+detector:
+  num_classes: 2           # irwm.data.aligned.ALIGNED_NUM_CLASSES
+
+export:                    # after a COMPLETE (non-smoke) fit, rank 0 exports best-eNNN.ckpt as the frozen head
+  enabled: true            # $IRWM_CKPT_ROOT/detection/frozen/<name>/ (irwm.detection.frozen / frozen_vitdet)
+  overwrite: false         # write-once: a different existing head.pt fails the job (so afterok eval waits)
+
+smoke:                     # fast cluster pipeline check (never exports): train and validate on the first n_frames
+  enabled: false           # non-empty aligned train frames, constant lr, no flip
+  n_frames: 32
+  max_steps: 60
+  eval_every: 30
