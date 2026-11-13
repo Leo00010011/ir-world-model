@@ -67,6 +67,9 @@ def download_mae_weights(force: bool = False) -> Path:
 
 
 def main() -> None:
+    from irwm.utils.paths import load_env
+
+    load_env()  # a plain `python -m` run does not go through slurm/env.sh or a Hydra entry point
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--force", action="store_true", help="re-download even if the file verifies")
     print(download_mae_weights(force=parser.parse_args().force))
