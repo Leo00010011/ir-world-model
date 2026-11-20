@@ -1,0 +1,9 @@
+[project]
+name = "irwm-segment-annotation"
+version = "0.1.0"
+description = "OpenCV tool to mark contiguous clips and day/night on the aligned FLIR test set. Run with `uv run --script annotate_segments.py` (own env: needs GUI OpenCV, the workspace has opencv-headless)."
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[tool.uv]
+package = false

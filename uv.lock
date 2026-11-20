@@ -20,6 +20,7 @@ members = [
     "irwm-detector-kit",
     "irwm-dinof-audit",
     "irwm-feature-extraction",
+    "irwm-segment-annotation",
     "irwm-smoke",
 ]
 
@@ -858,6 +859,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "irwm", extras = ["reference"], editable = "lib" }]
+
+[[package]]
+name = "irwm-segment-annotation"
+version = "0.1.0"
+source = { virtual = "projects/segment_annotation" }
 
 [[package]]
 name = "irwm-smoke"
