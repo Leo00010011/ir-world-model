@@ -61,7 +61,10 @@ ir-world-model/
 │   ├── DINO-Foresight/         # git submodule (Sta8is/DINO-Foresight), pinned commit, NOT modified in place
 │   └── detrex/                 # git submodule (IDEA-Research/detrex @ e244e6c, nested detectron2 @ 70f4543), NOT modified; installed editable (F7)
 ├── slurm/                      # sbatch templates shared by all projects
-├── notebooks/                  # analysis only; never imported by code
+├── notebooks/                  # analysis only; never imported by code; one subfolder per Roadmap phase
+│   ├── phase1_data_features/   # F2 dataset stats, F4 encoder
+│   ├── phase2_flir_v2_detection/  # F7 benchmarks, F8 training, F15 transfer + test-set follow-ups
+│   └── phase2b_aligned_flir/   # F16–F19 aligned FLIR v1 and backbone ablation
 └── tests/                      # pytest, one file per feature: tests/test_<feature>.py
 ```
 
@@ -70,7 +73,7 @@ Rules:
 - A project folder may later get its own `spec/`-style constitution once it grows large enough.
 - **Hydra wiring:** shared config groups live in `lib/irwm/conf/`. A project's primary config uses `defaults: [irwm_base, _self_]` and `hydra.searchpath: ["pkg://irwm.conf"]`, and sets `project: <folder name>`. Every entry point calls `irwm.utils.paths.load_env()` at import time, before `@hydra.main`. `run_name` comes from the cluster group (a timestamp locally, `slurm-<job id>` on SLURM, which is stable across requeues). Checkpoints go to `${paths.ckpt_root}/<project>/${run_name}/`, with the trainer's `default_root_dir` set to that dir, and training resumes with `resume_ckpt_path()`.
 - **Reference-only deps:** `pytorch_lightning`, `timm`, `einops` and `scikit-learn==1.5.2` are needed only to run DINO-Foresight's own code. They live in the optional extra `irwm[reference]` (used by `projects/dinof_audit`) and are imported lazily, so `lib/irwm` imports without them. A test enforces that there are no module-level imports.
-- **Notebooks** (`notebooks/`) need the root dependency group `notebook` (`ipykernel`, `matplotlib`): `uv sync --group notebook`. A plain `uv sync` removes it again. Notebooks read results from `$IRWM_OUTPUT_ROOT` through `irwm.utils.paths`, never from hard-coded paths.
+- **Notebooks** (`notebooks/<phase>/`, a new phase gets a new subfolder, e.g. `phase3_world_model/`) need the root dependency group `notebook` (`ipykernel`, `matplotlib`): `uv sync --group notebook`. A plain `uv sync` removes it again. Notebooks read results from `$IRWM_OUTPUT_ROOT` through `irwm.utils.paths`, never from hard-coded paths.
 - **Dependencies:** deps shared by all projects (torch, lightning, hydra, wandb, …) are declared in `lib/pyproject.toml`. Each feature adds its own deps there, or to its project's `pyproject.toml` if only that project needs them.
 - `lib/irwm` must never import from `projects/`.
 - Third-party code is used only through an adapter: DINO-Foresight in `irwm/worldmodel/`, detrex in `irwm/detection/detrex_adapter.py` (configs loaded with `LazyConfig` from the submodule, never copied). We do not patch the submodule. If a change is unavoidable, it is kept as a patch file with its reason recorded in the spec.
@@ -217,7 +220,7 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Canonical label space (6 classes, ignore rule, 640×512-normalised size buckets) | `lib/irwm/data/classes.py` | F2 | ✓ |
 | Shared Hydra group `flir` (`flir.root`) | `lib/irwm/conf/flir/default.yaml` | F2 | ✓ |
 | Dataset statistics (`compute_stats`, `render_markdown`, `COCO80_NAME`) + entry point | `lib/irwm/data/stats.py`, `projects/data_stats/` | F2 | ✓ (ctdesk236) |
-| Stats notebook | `notebooks/flir_stats.ipynb` | F2 | ✓ |
+| Stats notebook | `notebooks/phase1_data_features/flir_stats.ipynb` | F2 | ✓ |
 | Video clip index: `ClipIndex`, `Clip`, `check_pairing`, `find_segments`, `build_clip_index`, `dump_clip_index`/`write_clip_index` (never overwrites a differing file), `summarise` | `lib/irwm/data/clips.py` | F3 | ✓ |
 | Committed clip set `flir_test_fs5_c4f6_cs10` (330 clips, 304 evaluable; shared RGB/thermal rows) + builder entry point | `lib/irwm/data/clip_sets/`, `projects/clip_index/` | F3 | ✓ (ctdesk236) |
 | Preprocessing: `Preprocess`, `ResizeGeometry`, `POLICY_SIZE` (stretch/crop/native centre crops, thermal 1→3, ImageNet norm, box mapping) | `lib/irwm/features/preprocess.py` | F4 | ✓ |
@@ -225,13 +228,13 @@ Updated by every feature when it is marked done. Status: ☐ planned · ◐ in p
 | Shared Hydra group `encoder` (`policy` default `native` since 2026-10-25, `precision`, `hub_version`, `attention` default `plain`, F8; detection training sets `sdpa`) | `lib/irwm/conf/encoder/default.yaml` | F4, F8 | ✓ |
 | Shared reference helpers `one_step`, `pca_metrics` (moved from the audit) | `lib/irwm/worldmodel/reference.py` | F4 | ✓ |
 | Feature-extraction project: `r5_probe.py` (R5 FLIR probe), `throughput.py` (GPU-only, fidelity, end-to-end and loader-only; `attentions` plain/SDPA, F7) | `projects/feature_extraction/` | F4, F7 | ✓ (hpc-gpu5, L4) |
-| Encoder/R5 results notebook | `notebooks/encoder_r5_results.ipynb` | F4 | ✓ |
+| Encoder/R5 results notebook | `notebooks/phase1_data_features/encoder_r5_results.ipynb` | F4 | ✓ |
 | HDF5 feature cache | `lib/irwm/features/cache.py` | F5 | ☐ |
 | detrex submodule @ `e244e6c` (+ detectron2 @ `70f4543`), editable, compiled CUDA ops | `third_party/detrex` | F7 | ✓ (ctcomp3 CUDA build) |
 | DINO-DETR head: `detrex_adapter` (`detrex_root`, `ensure_detrex_projects`, `load_dino_vitdet_config`, `cuda_ops_available`), `FeatureStem`, `FeatureDINO`, `build_dino_config`, `DINODetector` | `lib/irwm/detection/` | F7 | ✓ (6/6 GPU tests, overfit, L4) |
 | Shared Hydra group `detector` (`in_channels`, `stem_dim`, `num_classes`, `overrides`) | `lib/irwm/conf/detector/default.yaml` | F7 | ✓ |
 | Detection project: `head_bench.py` (train/infer cost; `msda` = `cuda` or `pytorch`) | `projects/detection/` | F7 | ✓ (hpc-gpu6, L4) |
-| Performance benchmarks notebook (SDPA, staging, MSDA) | `notebooks/bench_short_runs.ipynb` | F7 | ✓ |
+| Performance benchmarks notebook (SDPA, staging, MSDA) | `notebooks/phase2_flir_v2_detection/bench_short_runs.ipynb` | F7 | ✓ |
 | Detection data: `FlirDetectionDataset` (encoder-frame boxes, hflip, empty filter), `collate_detection`, `first_nonempty_ids`, `FlirDetectionDataModule` (`val_gt`); `Preprocess.geometry` | `lib/irwm/data/detection.py`, `lib/irwm/features/preprocess.py` | F8 | ✓ |
 | Val mAP: `to_flir_detections` (encoder frame → FLIR pixels, COCO ids), `coco_map` (pycocotools, ignore regions as crowd, per-class AP/AP50) | `lib/irwm/detection/coco_val.py` | F8 | ✓ |
 | `DetectorModule` (frozen on-the-fly encoder, AdamW + `MultiStepLR`, encoder stripped from checkpoints, non-finite guard, `perf/*` timing) | `lib/irwm/detection/lightning.py` | F8 | ✓ (L4, 2 × 50 epochs) |

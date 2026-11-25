@@ -1,6 +1,6 @@
 # F7 · DINO-DETR head port: Results (2026-10-26)
 
-Results note per FR11, written from the user's ctcomp3 runs of 2026-10-25 (plan.md Step 9) and the overnight benchmarks briefed in `bench-short-runs.md` / `bench-overnight-runs.md`. Raw outputs: `outputs/` (Hydra run dirs + `slurm_logs/`), analysed in `notebooks/bench_short_runs.ipynb`.
+Results note per FR11, written from the user's ctcomp3 runs of 2026-10-25 (plan.md Step 9) and the overnight benchmarks briefed in `bench-short-runs.md` / `bench-overnight-runs.md`. Raw outputs: `outputs/` (Hydra run dirs + `slurm_logs/`), analysed in `notebooks/phase2_flir_v2_detection/bench_short_runs.ipynb`.
 
 **Provenance.** Every GPU run used commit `9b5a7ff` with uncommitted changes (`git.dirty = true` in every JSON): the SDPA / MSDA-shim / staging code listed in `bench-short-runs.md` "Code involved", committed afterwards in `ca02d8e`. detrex @ `e244e6c`, detectron2 @ `70f4543`, torch `2.2.0+cu121`, GPU NVIDIA L4 (24 GB) on hpc-gpu5 / hpc-gpu6.
 
@@ -54,7 +54,7 @@ Job C (SLURM 5525667, hpc-gpu6, W&B `4c11kfnm`): `outputs/detection/2026-10-25/1
 `n_params` in both JSONs: **23,001,286** (default head, C = 1152), equal to the spec-time probe. The 3072-d variant (24,479,686) is checked on CPU (Group 4).
 
 ## 6. Related benchmarks run under this spec (not F7 FRs)
-The same campaign measured two encoder optimisations for the thesis (`bench-*.md`). Full analysis in `notebooks/bench_short_runs.ipynb`; key numbers:
+The same campaign measured two encoder optimisations for the thesis (`bench-*.md`). Full analysis in `notebooks/phase2_flir_v2_detection/bench_short_runs.ipynb`; key numbers:
 - **Fused SDPA in the DINOv2 encoder** (job A, SLURM 5525665, hpc-gpu5, W&B `6o47ocr3`; `outputs/feature_extraction/2026-10-25/13-28-51/throughput.json`):
   - fp16: 37.0 → 90.4 fps at B = 64 (**2.44×**), peak memory 9.49 → 3.34 GB;
   - fp32: 18.9 → 24.8 fps (1.32×), 12.09 → 3.82 GB.

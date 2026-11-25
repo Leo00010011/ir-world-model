@@ -32,7 +32,7 @@ There was also an earlier S2 run under the old defaults (448×896 and 448×560, 
 - **S2:** `outputs/feature_extraction/2026-10-25/13-09-29/throughput.json`. Every section ran.
   - Fidelity (bit-identical in S2, A and B): fp16 mean token cosine 0.9999982, max |Δ| 0.047. fp32 cosine 1.0, max |Δ| 4.5e-5.
 - **S3:** `outputs/detection/2026-10-25/13-15-30/head_bench.json`. 4/4 rows, no OOM (train and infer × fp32 and fp16, 32×40, PyTorch MSDA).
-- Analysis: `notebooks/bench_short_runs.ipynb`. Summary: `results.md` §4 and §6.
+- Analysis: `notebooks/phase2_flir_v2_detection/bench_short_runs.ipynb`. Summary: `results.md` §4 and §6.
 
 ## What the analysis session should do
 1. Confirm S1–S3 succeeded. If anything failed, find the cause before trusting the overnight runs, which use the same code.
