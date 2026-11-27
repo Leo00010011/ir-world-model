@@ -2,13 +2,14 @@
 
 Spec: spec/2026-10-26-detector-training-pipeline (FR6). Names: ``det_rgb`` / ``det_ir`` (FLIR v2)
 and, for the aligned FLIR v1 backbone ablation (F18, Roadmap Phase 2b),
-``aligned_{dinopca,dino3072,mae}_{rgb,ir}`` (``ir`` → modality ``thermal``). Layout::
+``aligned_{dinopca,dino3072,mae}_{rgb,ir}`` (``ir`` → modality ``thermal``), and for KAIST-Paired
+(2026-11-27) ``kaist_dinopca_{rgb,ir}``. Layout::
 
     $IRWM_CKPT_ROOT/detection/frozen/<name>/
     ├── head.pt     # DINODetector state_dict (keys "detr.*"), fp32 master weights of 16-mixed training
     └── meta.json   # modality, dataset, precision "16-mixed", source checkpoint, val metrics, hyperparameters, SHA-256
 
-``meta["dataset"]`` is ``"flir_v2"`` or ``"aligned_v1"``; metas written before it existed are
+``meta["dataset"]`` is ``"flir_v2"``, ``"aligned_v1"`` or ``"kaist"``; metas written before it existed are
 FLIR v2 (``frozen_meta`` fills the default). ``aligned_mae_*`` heads (detrex's stock ViTDet,
 ``meta["detector"]["arch"] == "vitdet_mae"``) are not ``DINODetector``s and have their own loader.
 
@@ -33,12 +34,16 @@ from irwm.utils.paths import ckpt_root
 from irwm.utils.tracking import git_info
 
 ALIGNED_BACKBONES: tuple[str, ...] = ("dinopca", "dino3072", "mae")
+KAIST_BACKBONES: tuple[str, ...] = ("dinopca",)
 _SUFFIX_MODALITY: dict[str, str] = {"rgb": "rgb", "ir": "thermal"}
 FROZEN_NAMES: tuple[str, ...] = ("det_rgb", "det_ir") + tuple(
-    f"aligned_{b}_{m}" for b in ALIGNED_BACKBONES for m in _SUFFIX_MODALITY)
+    f"aligned_{b}_{m}" for b in ALIGNED_BACKBONES for m in _SUFFIX_MODALITY) + tuple(
+    f"kaist_{b}_{m}" for b in KAIST_BACKBONES for m in _SUFFIX_MODALITY)
 FROZEN_MODALITY: dict[str, str] = {n: _SUFFIX_MODALITY[n.rsplit("_", 1)[1]] for n in FROZEN_NAMES}
-FROZEN_DATASET: dict[str, str] = {n: "aligned_v1" if n.startswith("aligned_") else "flir_v2" for n in FROZEN_NAMES}
-DATASETS: tuple[str, ...] = ("flir_v2", "aligned_v1")
+_PREFIX_DATASET: dict[str, str] = {"aligned_": "aligned_v1", "kaist_": "kaist"}
+FROZEN_DATASET: dict[str, str] = {
+    n: next((d for p, d in _PREFIX_DATASET.items() if n.startswith(p)), "flir_v2") for n in FROZEN_NAMES}
+DATASETS: tuple[str, ...] = ("flir_v2", "aligned_v1", "kaist")
 PRECISION = "16-mixed"
 MAE_ARCH = "vitdet_mae"
 _PREFIX = "detector."

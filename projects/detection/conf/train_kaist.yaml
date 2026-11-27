@@ -1,0 +1,73 @@
+# Train one KAIST-Paired detector (2026-11-27, user): kaist_dinopca_rgb (visible camera) or
+# kaist_dinopca_ir (lwir camera), picked by `kaist=<name>` (conf/kaist/<name>.yaml).
+# Each head is its own SLURM job; submit both with slurm/train_kaist.sh:
+#   bash slurm/train_kaist.sh ctcomp3            # 2 jobs in parallel
+#   bash slurm/train_kaist.sh ctcomp3 --smoke    # 2 short pipeline checks
+# Data (irwm.data.kaist): KAIST-Paired annotations of the head's own camera, train-all-04 frames.
+#   train = set00, set01 (day) + set03, set04 (night); val = set02 (day) + set05 (night).
+#   Whole sets go to one split only. Empty train frames are dropped (F8/F18 convention).
+# Label space: person = 0, cyclist = 1 (2-way head). people / person? / unpaired are ignore
+#   regions (COCO): not loss targets, crowd GT in scoring, so detections on them are neither TP nor FP.
+# Recipe = F18's (detrex DINO-ViTDet on frozen DINOv2-Reg + PCA) with the user's KAIST schedule:
+#   20 epochs, AdamW lr 1e-4 for epochs 0-14, x0.1 for epochs 15-19; validation every 2 epochs.
+# Every validation scores two sets and logs, for each, AP (mAP@[.5:.95]), AP50, AP_/AP50_<class>
+#   (person, cyclist) and AP_/AP50_occ_{partial,heavy,any} (person boxes at occlusion 1 / 2 / >=1;
+#   every other box is an ignore region in those GTs):
+#     val/*         val sets (set02 + set05), every train-all-04 frame (kaist.val_stride = 1)
+#     train_eval/*  a fixed train subset, every `kaist.train_eval_stride`-th frame per video, no flip
+#   The best val/AP checkpoint is kept (+ last.ckpt) and exported as the frozen head.
+defaults:
+  - irwm_base
+  - _self_
+  - kaist: ???             # kaist_dinopca_<rgb|ir>; it overrides the values below
+
+hydra:
+  searchpath:
+    - pkg://irwm.conf
+
+project: detection
+dataset: kaist
+modality: ???              # set by the experiment: rgb | thermal
+name: ???                  # = frozen export name
+msda: cuda                 # detrex deformable attention: cuda (compiled op, cluster) | auto | pytorch
+
+kaist:
+  val_stride: 1            # val: every train-all-04 frame (1 in 4 at 20 Hz) of set02 + set05 = 2,695 frames
+  train_eval_stride: 5     # train-set metrics: 1 in 5 train-all-04 frames per video (1 in 20 at 20 Hz) = 1,975 frames; null = off
+
+data:
+  batch_size: 16
+  num_workers: ${cluster.num_workers}
+  flip_p: 0.5
+
+optim:                     # F8 AdamW (detrex common/optim.py)
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  weight_decay: 1.0e-4
+  backbone_lr_factor: 1.0  # F8 E1
+  lr_drop_epoch: 15        # x0.1 from epoch 15: 15 epochs high lr, 5 low (user, 2026-11-27)
+
+trainer:
+  max_epochs: 20
+  precision: 16-mixed
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.1
+  check_val_every_n_epoch: 2   # validations after epochs 2, 4, ..., 20 (user, 2026-11-27)
+  log_every_n_steps: 50
+
+encoder:
+  policy: native           # 640x512 is already 5:4: no crop, resize to 448x560 (32x40 tokens)
+  attention: sdpa          # the encoder of det_rgb / det_ir (TechStack §3.2)
+
+detector:
+  num_classes: 2           # irwm.data.kaist.KAIST_NUM_CLASSES
+
+export:                    # after a COMPLETE (non-smoke) fit, rank 0 exports best-eNNN.ckpt as the frozen head
+  enabled: true            # $IRWM_CKPT_ROOT/detection/frozen/<name>/
+  overwrite: false
+
+smoke:                     # fast pipeline check (never exports): train and validate on the first n_frames
+  enabled: false           # non-empty train frames, constant lr, no flip
+  n_frames: 32
+  max_steps: 60
+  eval_every: 30

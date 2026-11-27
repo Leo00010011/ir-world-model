@@ -20,6 +20,10 @@ Backbone ablation (F18, aligned FLIR v1) generalises the module without changing
   preprocessed images directly and is trained end to end. There is no frozen encoder, the optimizer
   uses ``vitdet_param_groups`` (layer-wise lr decay) and checkpoints keep every weight.
 - ``class_names`` / ``label_to_category_id`` select the label space for val scoring (default FLIR v2).
+- **Extra evaluations (KAIST, 2026-11-27):** ``val_variants`` are extra GTs scored on the same val
+  detections (e.g. occlusion subsets), logged as ``val/AP_<variant>`` / ``val/AP50_<variant>``.
+  ``extra_eval`` adds validation dataloaders 1..N (e.g. a fixed train subset), each
+  ``{"prefix", "gt", "variants"}`` and logged as ``<prefix>/*``. Without them nothing changes.
 - The GPU(s) the run used are recorded once at fit start (``self.gpu_info``): logged as ``gpu/*``,
   written into every ``val_metrics`` JSON and into the checkpoint's ``irwm`` dict.
 
@@ -29,6 +33,7 @@ Imported explicitly (``irwm.detection.lightning``), not from ``irwm.detection``,
 from __future__ import annotations
 
 import json
+import math
 import statistics
 import time
 from collections.abc import Mapping, Sequence
@@ -83,13 +88,15 @@ class DetectorModule(L.LightningModule):
     def __init__(self, *, detector: Mapping[str, Any], encoder: Mapping[str, Any], optim: Mapping[str, Any],
                  val_gt: dict | None = None, encoder_module: nn.Module | None = None, perf_every: int = 50,
                  class_names: Sequence[str] | None = None,
-                 label_to_category_id: Mapping[int, int] | None = None) -> None:
+                 label_to_category_id: Mapping[int, int] | None = None,
+                 val_variants: Mapping[str, dict] | None = None,
+                 extra_eval: Sequence[Mapping[str, Any]] | None = None) -> None:
         super().__init__()
         if class_names is not None:
             class_names = list(class_names)
         if label_to_category_id is not None:
             label_to_category_id = {int(k): int(v) for k, v in label_to_category_id.items()}
-        self.save_hyperparameters(ignore=["val_gt", "encoder_module"])
+        self.save_hyperparameters(ignore=["val_gt", "encoder_module", "val_variants", "extra_eval"])
         self.arch = detector_arch(detector)
         self.image_size: tuple[int, int] = tuple(POLICY_SIZE[encoder["policy"]])  # type: ignore[assignment]
         if self.arch == VITDET_ARCH:
@@ -113,12 +120,19 @@ class DetectorModule(L.LightningModule):
         self.label_to_category_id = label_to_category_id
         self.gpu_info: dict[str, Any] | None = None
         self.val_gt = val_gt
+        self.val_variants: dict[str, dict] = dict(val_variants or {})
+        self.extra_eval: list[dict[str, Any]] = [
+            {"prefix": str(e["prefix"]), "gt": e["gt"], "variants": dict(e.get("variants") or {})}
+            for e in (extra_eval or [])]
+        if any(e["prefix"] == "val" for e in self.extra_eval):
+            raise ValueError("extra_eval prefix 'val' is reserved for dataloader 0")
         self.metrics_dir: Path | None = None  # set by the entry point to <hydra run dir>/val_metrics
         self.perf_every = perf_every
         # A buffer, so the total survives SLURM requeues through the checkpoint.
         self.register_buffer("_nonfinite_steps", torch.zeros((), dtype=torch.long))
         self._nonfinite_run = 0
-        self._val_dets: dict[int, list[dict]] = {}
+        self._val_dets: dict[int, list[dict]] = {}  # dataloader 0, by image_id
+        self._extra_dets: list[dict[int, list[dict]]] = [{} for _ in self.extra_eval]  # dataloaders 1..N
         self._timed = False
         self._t_start = self._t_encoded = 0.0
         self._epoch_t0 = 0.0
@@ -243,39 +257,66 @@ class DetectorModule(L.LightningModule):
             self.log("train/grad_scale", float(scaler.get_scale()), on_step=False, on_epoch=True)
 
     # ------------------------------------------------------------------ val
-    def validation_step(self, batch: dict, batch_idx: int) -> None:
+    def validation_step(self, batch: dict, batch_idx: int, dataloader_idx: int = 0) -> None:
         preds = self.detector(self.encode(batch["images"]), image_size=self.image_size)
+        store = self._val_dets if dataloader_idx == 0 else self._extra_dets[dataloader_idx - 1]
         for image_id, geom, pred in zip(batch["image_ids"], batch["geometries"], preds):
-            self._val_dets[image_id] = to_flir_detections([pred], [image_id], [geom],
-                                                          label_to_category_id=self.label_to_category_id)
+            store[image_id] = to_flir_detections([pred], [image_id], [geom],
+                                                 label_to_category_id=self.label_to_category_id)
+
+    @staticmethod
+    def _gather(dets: dict[int, list[dict]]) -> dict[int, list[dict]]:
+        if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+            return dets
+        gathered: list[dict[int, list[dict]] | None] = [None] * torch.distributed.get_world_size()
+        torch.distributed.all_gather_object(gathered, dets)
+        out: dict[int, list[dict]] = {}
+        for part in gathered:  # dedupe by image_id: the DDP sampler pads with repeated frames
+            for image_id, d in (part or {}).items():
+                out.setdefault(image_id, d)
+        return out
+
+    def score_eval_sets(self, dets_per_loader: Sequence[dict[int, list[dict]]]) -> dict[str, dict[str, float]]:
+        """``{prefix: metrics}`` for dataloader 0 (``"val"``) and every ``extra_eval`` set.
+
+        Each set gets ``coco_map`` on its main GT, plus ``AP_<v>`` / ``AP50_<v>`` for each variant GT.
+        """
+        sets = [{"prefix": "val", "gt": self.val_gt, "variants": self.val_variants}, *self.extra_eval]
+        out: dict[str, dict[str, float]] = {}
+        for spec, dets in zip(sets, dets_per_loader, strict=True):
+            flat = [d for image_id in sorted(dets) for d in dets[image_id]]
+            metrics = coco_map(spec["gt"], flat, class_names=self.class_names)
+            for name, gt in spec["variants"].items():
+                m = coco_map(gt, flat, class_names=self.class_names)
+                for key in ("AP", "AP50"):  # COCOeval's -1 (no GT box in the subset) → nan
+                    metrics[f"{key}_{name}"] = m[key] if m[key] >= 0 else math.nan
+            out[spec["prefix"]] = metrics
+        return out
 
     def on_validation_epoch_end(self) -> None:
-        dets, self._val_dets = self._val_dets, {}
+        dets = [self._val_dets, *self._extra_dets]
+        self._val_dets, self._extra_dets = {}, [{} for _ in self.extra_eval]
         if self.trainer.sanity_checking:  # amendment 2026-10-26: the sanity batches are not scored
             return
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            gathered: list[dict[int, list[dict]] | None] = [None] * torch.distributed.get_world_size()
-            torch.distributed.all_gather_object(gathered, dets)
-            dets = {}
-            for part in gathered:  # dedupe by image_id: the DDP sampler pads with repeated frames
-                for image_id, d in (part or {}).items():
-                    dets.setdefault(image_id, d)
+        dets = [self._gather(d) for d in dets]
 
-        metrics: dict[str, float] | None = None
+        scored: dict[str, dict[str, float]] | None = None
         if self.trainer.is_global_zero:
-            metrics = coco_map(self.val_gt, [d for image_id in sorted(dets) for d in dets[image_id]],
-                               class_names=self.class_names)
+            scored = self.score_eval_sets(dets)
             if self.metrics_dir is not None:
                 self.metrics_dir.mkdir(parents=True, exist_ok=True)
-                record = {"metrics": metrics, "epoch": self.current_epoch, "global_step": self.global_step,
+                record = {"metrics": scored["val"], "epoch": self.current_epoch, "global_step": self.global_step,
                           "git": git_info()}
+                if self.extra_eval:
+                    record["eval"] = scored
                 if self.gpu_info is not None:
                     record["gpu"] = self.gpu_info
                 path = self.metrics_dir / f"epoch_{self.current_epoch:03d}.json"
                 path.write_text(json.dumps(record, indent=2))
-        metrics = self.trainer.strategy.broadcast(metrics, src=0)
-        for key, value in metrics.items():
-            self.log(f"val/{key}", value, sync_dist=False)
+        scored = self.trainer.strategy.broadcast(scored, src=0)
+        for prefix, metrics in scored.items():
+            for key, value in metrics.items():
+                self.log(f"{prefix}/{key}", value, sync_dist=False, add_dataloader_idx=False)
 
     # ------------------------------------------------------------------ optim
     def _param_groups(self) -> list[dict]:

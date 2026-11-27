@@ -222,7 +222,7 @@ class TestFrozen:
             assert F.FROZEN_MODALITY[f"aligned_{b}_rgb"] == "rgb"
             assert F.FROZEN_MODALITY[f"aligned_{b}_ir"] == "thermal"
             assert F.FROZEN_DATASET[f"aligned_{b}_ir"] == "aligned_v1"
-        assert F.FROZEN_DATASET["det_ir"] == "flir_v2" and len(F.FROZEN_NAMES) == 8
+        assert F.FROZEN_DATASET["det_ir"] == "flir_v2" and len(F.FROZEN_NAMES) == 10
         with pytest.raises(ValueError, match="Unknown frozen detector"):
             F.frozen_dir("aligned_resnet_ir")
 

@@ -1,0 +1,12 @@
+# @package _global_
+# KAIST-Paired, visible camera: frozen DINOv2-Reg + Cityscapes PCA (1152-d), = the det_rgb/det_ir encoder.
+modality: rgb
+name: kaist_dinopca_rgb
+encoder:
+  kind: dinopca
+  policy: native           # 448x560, 32x40 tokens
+detector:
+  in_channels: 1152
+  in_proj: null
+wandb:
+  tags: [kaist, kaist_dinopca_rgb, dinopca, rgb]

@@ -192,3 +192,79 @@ class AlignedDetectionDataModule(FlirDetectionDataModule):
         self.val_set = FlirDetectionDataset(val_split, policy=self.policy, flip_p=0.0,
                                             filter_empty=False, image_ids=self.val_image_ids)
         self.val_gt = val_split.subset(self.val_set._image_ids()).to_coco_gt("normalised")
+
+
+class KaistDetectionDataModule(FlirDetectionDataModule):
+    """KAIST-Paired: train (flip, empty frames dropped), val, and a fixed train subset for train-set metrics.
+
+    - ``train`` / ``val`` are the splits of ``irwm.data.kaist`` (whole sets, ``train-all-04`` frames),
+      read from ``modality``'s own camera annotations.
+    - ``val_stride`` keeps 1 frame in ``val_stride`` per val video (1 = every ``train-all-04`` frame).
+    - ``train_eval_stride`` (``None`` disables it) adds a second validation dataloader: 1 in
+      ``train_eval_stride`` frames per train video, never flipped, empty frames kept, the same frames
+      at every validation. Its GT is ``train_eval_gt``.
+    - ``occlusion_variants`` (``{name: levels}``, default ``OCCLUSION_LEVELS``) builds the extra GTs
+      ``val_variants`` / ``train_eval_variants``: only person boxes at those occlusion levels are GT.
+    - ``val_split="train"`` with ``val_image_ids`` validates on train frames (smoke / overfit mode).
+
+    GT categories are ``{1: person, 2: cyclist}``; ``people``, ``person?`` and ``unpaired`` are crowd.
+    """
+
+    def __init__(self, *, root=None, paired_root=None, val_stride: int = 1, train_eval_stride: int | None = None,
+                 occlusion_variants: dict[str, Sequence[int]] | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        from irwm.data.kaist import OCCLUSION_LEVELS
+
+        self.root = root
+        self.paired_root = paired_root
+        self.val_stride = int(val_stride)
+        self.train_eval_stride = None if train_eval_stride is None else int(train_eval_stride)
+        self.occlusion_variants = {k: tuple(v) for k, v in
+                                   (OCCLUSION_LEVELS if occlusion_variants is None else occlusion_variants).items()}
+        self.train_eval_set: FlirDetectionDataset | None = None
+        self.train_eval_gt: dict = {}
+        self.val_variants: dict[str, dict] = {}
+        self.train_eval_variants: dict[str, dict] = {}
+
+    def _gts(self, split) -> tuple[dict, dict[str, dict]]:
+        return (split.to_coco_gt("normalised"),
+                {name: split.to_coco_gt("normalised", occlusion=lv) for name, lv in self.occlusion_variants.items()})
+
+    def setup(self, stage: str | None = None) -> None:
+        if self.train_set is not None:
+            return
+        from irwm.data.kaist import KaistSplit, train_eval_ids
+
+        load = dict(root=self.root, paired_root=self.paired_root)
+        train_split = KaistSplit.load(self.modality, "train", **load)
+        if self.val_split == "train":
+            val_split, val_ids = train_split, self.val_image_ids
+        else:
+            val_split = KaistSplit.load(self.modality, "val", **load)
+            val_ids = self.val_image_ids if self.val_image_ids is not None else train_eval_ids(val_split, self.val_stride)
+        self.train_set = FlirDetectionDataset(train_split, policy=self.policy, flip_p=self.flip_p,
+                                              filter_empty=True, image_ids=self.train_image_ids)
+        self.val_set = FlirDetectionDataset(val_split, policy=self.policy, flip_p=0.0,
+                                            filter_empty=False, image_ids=val_ids)
+        self.val_gt, self.val_variants = self._gts(val_split.subset(self.val_set._image_ids()))
+        if self.train_eval_stride is not None:
+            ids = train_eval_ids(train_split, self.train_eval_stride)
+            if self.train_image_ids is not None:  # smoke mode: score only frames that are trained on
+                wanted = set(self.train_image_ids)
+                ids = [i for i in ids if i in wanted] or sorted(wanted)
+            self.train_eval_set = FlirDetectionDataset(train_split, policy=self.policy, flip_p=0.0,
+                                                       filter_empty=False, image_ids=ids)
+            self.train_eval_gt, self.train_eval_variants = self._gts(
+                train_split.subset(self.train_eval_set._image_ids()))
+
+    def extra_eval(self, prefix: str = "train_eval") -> list[dict]:
+        """``DetectorModule(extra_eval=...)`` for the train subset (empty if it is disabled)."""
+        if self.train_eval_set is None:
+            return []
+        return [{"prefix": prefix, "gt": self.train_eval_gt, "variants": self.train_eval_variants}]
+
+    def val_dataloader(self) -> DataLoader | list[DataLoader]:
+        val = self._loader(self.val_set, train=False)
+        if self.train_eval_set is None:
+            return val
+        return [val, self._loader(self.train_eval_set, train=False)]

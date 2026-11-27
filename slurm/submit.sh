@@ -33,7 +33,7 @@ cmd=(sbatch --job-name="irwm-${project}" --output="${log_dir}/%x-%j.out"
      slurm/job.sbatch "${entry}" "cluster=${site}" "$@")
 if [[ "${IRWM_SUBMIT_DRY_RUN:-0}" == "1" ]]; then
     printf '[dry-run]'
-    for v in IRWM_STAGE_DATA IRWM_STAGE_DATASETS IRWM_NO_UV_RUN; do
+    for v in IRWM_STAGE_DATA IRWM_STAGE_DATASETS IRWM_STAGE_KAIST_LIST IRWM_STAGE_KAIST_CAMERAS IRWM_NO_UV_RUN; do
         if [[ -n "${!v:-}" ]]; then printf ' %s=%q' "${v}" "${!v}"; fi
     done
     printf ' %q' "${cmd[@]}"
