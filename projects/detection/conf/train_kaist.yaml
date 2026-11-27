@@ -5,7 +5,9 @@
 #   bash slurm/train_kaist.sh ctcomp3 --smoke    # 2 short pipeline checks
 # Data (irwm.data.kaist): KAIST-Paired annotations of the head's own camera, train-all-04 frames.
 #   train = set00, set01 (day) + set03, set04 (night); val = set02 (day) + set05 (night).
-#   Whole sets go to one split only. Empty train frames are dropped (F8/F18 convention).
+#   Whole sets go to one split only. Negatives (user, 2026-11-28): every epoch trains on all frames with
+#   a box plus round(data.empty_ratio x positives) frames with no box, drawn afresh each epoch
+#   (0.25: ~3.4k + ~850 frames); frames whose only boxes are ignore regions are never used.
 # Label space: person = 0, cyclist = 1 (2-way head). people / person? / unpaired are ignore
 #   regions (COCO): not loss targets, crowd GT in scoring, so detections on them are neither TP nor FP.
 # Recipe = F18's (detrex DINO-ViTDet on frozen DINOv2-Reg + PCA) with the user's KAIST schedule:
@@ -15,6 +17,11 @@
 #   every other box is an ignore region in those GTs):
 #     val/*         val sets (set02 + set05), every train-all-04 frame (kaist.val_stride = 1)
 #     train_eval/*  a fixed train subset, every `kaist.train_eval_stride`-th frame per video, no flip
+#   Each set is also split by frame (user, 2026-11-28), so sets with different empty shares compare:
+#     <set>_nonempty/*  frames with >= 1 person/cyclist box: AP, AP50, AP_/AP50_<class>, n_images
+#     <set>_empty/*     frames with no box at all (AP is undefined there): FPPI@t and frac_fp@t (share of
+#                       frames with a detection >= t), overall and _<class>, for t in kaist.fp_thresholds
+#   Frames whose only boxes are ignore regions are in neither subset (they stay in <set>/*).
 #   The best val/AP checkpoint is kept (+ last.ckpt) and exported as the frozen head.
 defaults:
   - irwm_base
@@ -33,12 +40,14 @@ msda: cuda                 # detrex deformable attention: cuda (compiled op, clu
 
 kaist:
   val_stride: 1            # val: every train-all-04 frame (1 in 4 at 20 Hz) of set02 + set05 = 2,695 frames
+  fp_thresholds: [0.3, 0.5]  # score thresholds of the empty-frame metrics (FPPI@t, frac_fp@t)
   train_eval_stride: 5     # train-set metrics: 1 in 5 train-all-04 frames per video (1 in 20 at 20 Hz) = 1,975 frames; null = off
 
 data:
   batch_size: 16
   num_workers: ${cluster.num_workers}
   flip_p: 0.5
+  empty_ratio: 0.25        # empty frames per epoch / positive frames; 0 = drop them (F8/F18), all = keep every one
 
 optim:                     # F8 AdamW (detrex common/optim.py)
   lr: 1.0e-4

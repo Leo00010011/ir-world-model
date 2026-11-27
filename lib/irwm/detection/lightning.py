@@ -24,6 +24,11 @@ Backbone ablation (F18, aligned FLIR v1) generalises the module without changing
   detections (e.g. occlusion subsets), logged as ``val/AP_<variant>`` / ``val/AP50_<variant>``.
   ``extra_eval`` adds validation dataloaders 1..N (e.g. a fixed train subset), each
   ``{"prefix", "gt", "variants"}`` and logged as ``<prefix>/*``. Without them nothing changes.
+- **Frame subsets (KAIST, 2026-11-28):** ``val_subsets`` / an extra set's ``"subsets"``
+  (``{name: {"gt", "image_ids"}}``) re-score the detections of those frames only with ``coco_map``,
+  logged as ``<prefix>_<name>/*`` (e.g. ``val_nonempty/AP``). ``val_negatives`` / ``"negatives"``
+  (``{name: image_ids}``) are frames with no GT box, scored with ``fp_metrics`` (FPPI and the fraction
+  of frames with a false positive at ``fp_thresholds``), logged as ``<prefix>_<name>/*``.
 - The GPU(s) the run used are recorded once at fit start (``self.gpu_info``): logged as ``gpu/*``,
   written into every ``val_metrics`` JSON and into the checkpoint's ``irwm`` dict.
 
@@ -45,7 +50,7 @@ import torch
 from detectron2.solver.build import get_default_optimizer_params
 from torch import Tensor, nn
 
-from irwm.detection.coco_val import coco_map, to_flir_detections
+from irwm.detection.coco_val import _category_ids, coco_map, fp_metrics, to_flir_detections
 from irwm.detection.detector import DINODetector
 from irwm.features.preprocess import POLICY_SIZE
 from irwm.utils.tracking import git_info
@@ -90,13 +95,17 @@ class DetectorModule(L.LightningModule):
                  class_names: Sequence[str] | None = None,
                  label_to_category_id: Mapping[int, int] | None = None,
                  val_variants: Mapping[str, dict] | None = None,
-                 extra_eval: Sequence[Mapping[str, Any]] | None = None) -> None:
+                 extra_eval: Sequence[Mapping[str, Any]] | None = None,
+                 val_subsets: Mapping[str, Mapping[str, Any]] | None = None,
+                 val_negatives: Mapping[str, Sequence[int]] | None = None,
+                 fp_thresholds: Sequence[float] = (0.3, 0.5)) -> None:
         super().__init__()
         if class_names is not None:
             class_names = list(class_names)
         if label_to_category_id is not None:
             label_to_category_id = {int(k): int(v) for k, v in label_to_category_id.items()}
-        self.save_hyperparameters(ignore=["val_gt", "encoder_module", "val_variants", "extra_eval"])
+        self.save_hyperparameters(ignore=["val_gt", "encoder_module", "val_variants", "extra_eval", "val_subsets",
+                                          "val_negatives"])
         self.arch = detector_arch(detector)
         self.image_size: tuple[int, int] = tuple(POLICY_SIZE[encoder["policy"]])  # type: ignore[assignment]
         if self.arch == VITDET_ARCH:
@@ -121,8 +130,13 @@ class DetectorModule(L.LightningModule):
         self.gpu_info: dict[str, Any] | None = None
         self.val_gt = val_gt
         self.val_variants: dict[str, dict] = dict(val_variants or {})
+        self.val_subsets: dict[str, dict] = {k: dict(v) for k, v in (val_subsets or {}).items()}
+        self.val_negatives: dict[str, list[int]] = {k: [int(i) for i in v] for k, v in (val_negatives or {}).items()}
+        self.fp_thresholds = tuple(float(t) for t in fp_thresholds)
         self.extra_eval: list[dict[str, Any]] = [
-            {"prefix": str(e["prefix"]), "gt": e["gt"], "variants": dict(e.get("variants") or {})}
+            {"prefix": str(e["prefix"]), "gt": e["gt"], "variants": dict(e.get("variants") or {}),
+             "subsets": {k: dict(v) for k, v in (e.get("subsets") or {}).items()},
+             "negatives": {k: [int(i) for i in v] for k, v in (e.get("negatives") or {}).items()}}
             for e in (extra_eval or [])]
         if any(e["prefix"] == "val" for e in self.extra_eval):
             raise ValueError("extra_eval prefix 'val' is reserved for dataloader 0")
@@ -280,8 +294,11 @@ class DetectorModule(L.LightningModule):
         """``{prefix: metrics}`` for dataloader 0 (``"val"``) and every ``extra_eval`` set.
 
         Each set gets ``coco_map`` on its main GT, plus ``AP_<v>`` / ``AP50_<v>`` for each variant GT.
+        Frame subsets add ``{prefix}_{name}``: ``coco_map`` on the subset's frames (``subsets``) or
+        ``fp_metrics`` on frames with no GT box (``negatives``).
         """
-        sets = [{"prefix": "val", "gt": self.val_gt, "variants": self.val_variants}, *self.extra_eval]
+        sets = [{"prefix": "val", "gt": self.val_gt, "variants": self.val_variants,
+                 "subsets": self.val_subsets, "negatives": self.val_negatives}, *self.extra_eval]
         out: dict[str, dict[str, float]] = {}
         for spec, dets in zip(sets, dets_per_loader, strict=True):
             flat = [d for image_id in sorted(dets) for d in dets[image_id]]
@@ -291,6 +308,13 @@ class DetectorModule(L.LightningModule):
                 for key in ("AP", "AP50"):  # COCOeval's -1 (no GT box in the subset) → nan
                     metrics[f"{key}_{name}"] = m[key] if m[key] >= 0 else math.nan
             out[spec["prefix"]] = metrics
+            for name, sub in (spec.get("subsets") or {}).items():
+                ids = {int(i) for i in sub["image_ids"]}
+                m = coco_map(sub["gt"], [d for d in flat if int(d["image_id"]) in ids], class_names=self.class_names)
+                out[f"{spec['prefix']}_{name}"] = {**m, "n_images": float(len(ids))}
+            for name, ids in (spec.get("negatives") or {}).items():
+                out[f"{spec['prefix']}_{name}"] = fp_metrics(flat, ids, _category_ids(spec["gt"], self.class_names),
+                                                             thresholds=self.fp_thresholds)
         return out
 
     def on_validation_epoch_end(self) -> None:

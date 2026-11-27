@@ -2,12 +2,15 @@
 
 KAIST frames (640×512) → ``native`` 448×560 → flip → frozen DINOv2-Reg + PCA (SDPA, fp16) → F7 head
 (person, cyclist). Each head trains on its own camera's KAIST-Paired boxes; ``people``, ``person?``
-and ``unpaired`` are ignore regions. Splits (``irwm.data.kaist``): train = set00, set01, set03, set04,
+and ``unpaired`` are ignore regions. Every epoch uses all positive frames plus a fresh random draw of
+empty frames (``data.empty_ratio`` × positives, default 0.25). Splits (``irwm.data.kaist``): train = set00, set01, set03, set04,
 val = set02 (day) + set05 (night), ``train-all-04`` frames. Recipe: ``conf/train_kaist.yaml``
 (20 epochs, lr 1e-4, ×0.1 from epoch 15, validation every 2 epochs).
 
 Each validation scores the val sets (``val/*``) and a fixed train subset (``train_eval/*``): AP, AP50,
-per-class AP/AP50 and AP/AP50 on occluded pedestrians (``*_occ_{partial,heavy,any}``)::
+per-class AP/AP50 and AP/AP50 on occluded pedestrians (``*_occ_{partial,heavy,any}``), then splits each
+set by frame: ``*_nonempty/*`` (AP on frames with a box) and ``*_empty/*`` (FPPI and the fraction of
+frames with a false positive at ``kaist.fp_thresholds``, on frames with no box at all)::
 
     bash slurm/train_kaist.sh ctcomp3 [--smoke] [--heads kaist_dinopca_ir]
     # one head by hand (what the launcher runs):
@@ -56,7 +59,7 @@ class ValRecorder(Callback):
         if trainer.sanity_checking:
             return
         metrics = {k: float(v) for k, v in trainer.callback_metrics.items()
-                   if k.startswith(("val/", "train_eval/"))}
+                   if k.startswith(("val", "train_eval"))}
         self.validations.append({"epoch": trainer.current_epoch, "global_step": trainer.global_step,
                                  "metrics": metrics})
 
@@ -81,6 +84,9 @@ def check_config(cfg: DictConfig) -> None:
         raise ValueError(f"detector.num_classes {cfg.detector.num_classes} != {KAIST_NUM_CLASSES} (person, cyclist)")
     if detector_arch(cfg.detector) != "dino" or cfg.encoder.policy != "native":
         raise ValueError(f"{cfg.name}: KAIST heads use the frozen-encoder DINO head at policy 'native'")
+    if not (cfg.data.empty_ratio == "all" or (isinstance(cfg.data.empty_ratio, (int, float))
+                                               and cfg.data.empty_ratio >= 0)):
+        raise ValueError(f"data.empty_ratio must be a number >= 0 or 'all', got {cfg.data.empty_ratio!r}")
     if int(cfg.kaist.val_stride) < 1:
         raise ValueError(f"kaist.val_stride must be >= 1, got {cfg.kaist.val_stride}")
 
@@ -118,7 +124,8 @@ def main(cfg: DictConfig) -> None:
     dm_kwargs = dict(modality=cfg.modality, policy=policy, batch_size=cfg.data.batch_size,
                      num_workers=cfg.data.num_workers, flip_p=cfg.data.flip_p,
                      val_stride=cfg.kaist.val_stride,
-                     train_eval_stride=None if te_stride is None else int(te_stride))
+                     train_eval_stride=None if te_stride is None else int(te_stride),
+                     empty_ratio=cfg.data.empty_ratio, seed=cfg.seed)
     if smoke:
         ids = first_nonempty_ids(KaistSplit.load(cfg.modality, "train"), cfg.smoke.n_frames, policy)
         dm_kwargs.update(flip_p=0.0, train_image_ids=ids, val_split="train", val_image_ids=ids)
@@ -130,12 +137,15 @@ def main(cfg: DictConfig) -> None:
     model = DetectorModule(detector=_container(cfg.detector), encoder=_container(cfg.encoder), optim=optim,
                            val_gt=dm.val_gt, class_names=list(KAIST_CLASS_NAMES),
                            label_to_category_id=dict(KAIST_LABEL_TO_CATEGORY_ID),
-                           val_variants=dm.val_variants, extra_eval=dm.extra_eval())
+                           val_variants=dm.val_variants, extra_eval=dm.extra_eval(),
+                           val_subsets=dm.val_subsets, val_negatives=dm.val_negatives,
+                           fp_thresholds=list(cfg.kaist.fp_thresholds))
     model.metrics_dir = run_dir / "val_metrics"
 
     logger = make_wandb_logger(cfg, save_dir=run_dir)
-    counts = {"n_train_frames": len(dm.train_set), "n_dropped_empty": dm.train_set.n_dropped_empty,
-              "n_val_frames": len(dm.val_set),
+    counts = {"n_train_frames": dm.train_epoch_size, "n_train_positive": dm.n_positive,
+              "n_train_empty_pool": dm.n_empty_pool, "n_train_empty_per_epoch": dm.n_empty_per_epoch,
+              "n_train_ignore_only_dropped": dm.n_ignore_only, "n_val_frames": len(dm.val_set),
               "n_train_eval_frames": len(dm.train_eval_set) if dm.train_eval_set is not None else 0}
     logger.log_metrics({f"data/{k}": v for k, v in counts.items()}, step=0)
 

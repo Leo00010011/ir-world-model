@@ -11,11 +11,12 @@
 #
 # Every job stages only what it reads to node-local scratch (slurm/stage_data.sh): the train-all-04
 # frames of its own camera (kaist-cvpr15) and their KAIST-Paired annotations (kaist-paired).
-# Resources: gpu:1 [GRES], 240 min [TIME], 8 cpus / 8 workers, 32 GB [MEM].
+# Resources: gpu:1 [GRES], 270 min [TIME], 8 cpus / 8 workers, 32 GB [MEM].
 # Time limit sized for the WORST GPU a job can land on, an L4 (estimate, not measured):
-#   train: ~3.4k non-empty frames / 16 = ~212 steps x 1.52 s (F8, L4) = ~5.4 min per epoch, 20 epochs = 1.8 h;
-#   10 validations x ~4.7k frames (2.7k val + 2.0k train subset) at ~30 ms/frame = ~25 min; total ~2.3 h,
-#   x1.5 margin + staging/startup -> 240 min. Any GPU at least as fast as an L4 is fine: never pin a type.
+#   train: ~3.4k positive + ~0.85k empty frames (data.empty_ratio 0.25) / 16 = ~265 steps x 1.52 s (F8, L4)
+#   = ~6.7 min per epoch, 20 epochs = 2.2 h; 10 validations x ~4.7k frames (2.7k val + 2.0k train subset)
+#   at ~30 ms/frame = ~25 min; total ~2.7 h, x1.5 margin + staging/startup -> 270 min.
+#   (data.empty_ratio=all: ~9.4k frames per epoch, ~5.5 h total: pass TIME=540.) Any GPU at least as fast as an L4 is fine: never pin a type.
 #
 # Prints one "<head> <job id>" line per job at the end.
 set -euo pipefail
@@ -61,7 +62,7 @@ export IRWM_STAGE_KAIST_LIST="train-all-04.txt"
 [[ "${dry}" == "1" ]] && export IRWM_SUBMIT_DRY_RUN=1
 
 gres="${GRES:-gpu:1}"; mem="${MEM:-32}"
-time_min="${TIME:-240}"; [[ "${smoke}" == "1" ]] && time_min="${SMOKE_TIME:-45}"
+time_min="${TIME:-270}"; [[ "${smoke}" == "1" ]] && time_min="${SMOKE_TIME:-45}"
 
 declare -a summary=()
 for h in "${heads[@]}"; do

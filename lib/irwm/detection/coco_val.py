@@ -107,3 +107,30 @@ def coco_map(gt: dict, detections: list[dict], *,
         metrics[f"AP_{c}"] = _mean_valid(p[:, :, k, 0, -1])  # area "all", maxDets 100
         metrics[f"AP50_{c}"] = _mean_valid(p[0, :, k, 0, -1])
     return metrics
+
+
+def fp_metrics(detections: list[dict], image_ids: Sequence[int], category_ids: Mapping[str, int], *,
+               thresholds: Sequence[float] = (0.3, 0.5)) -> dict[str, float]:
+    """False-positive metrics on frames with no GT box at all, where every detection is a false positive.
+
+    For each score threshold ``t`` (key suffix ``@t``), overall and per class (``_<class>``):
+
+    - ``FPPI@t``: detections with ``score >= t`` per image (the KAIST / Caltech miss-rate curve's x axis);
+    - ``frac_fp@t``: fraction of the images with at least one such detection.
+
+    Detections on other images are ignored. ``n_images`` is ``len(image_ids)``; with no image every
+    rate is ``nan``. AP is undefined here (no positives), which is why these replace it.
+    """
+    ids = {int(i) for i in image_ids}
+    n = len(ids)
+    by_cat = {cid: c for c, cid in category_ids.items()}
+    dets = [d for d in detections if int(d["image_id"]) in ids and int(d["category_id"]) in by_cat]
+    out: dict[str, float] = {"n_images": float(n)}
+    for t in thresholds:
+        kept = [d for d in dets if float(d["score"]) >= t]
+        groups = {"": kept, **{f"_{c}": [d for d in kept if by_cat[int(d["category_id"])] == c]
+                               for c in category_ids}}
+        for suffix, ds in groups.items():
+            out[f"FPPI@{t:g}{suffix}"] = len(ds) / n if n else math.nan
+            out[f"frac_fp@{t:g}{suffix}"] = len({int(d["image_id"]) for d in ds}) / n if n else math.nan
+    return out

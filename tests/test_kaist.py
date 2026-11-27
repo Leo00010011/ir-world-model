@@ -35,7 +35,7 @@ from irwm.data.kaist import (
     split_frames,
     train_eval_ids,
 )
-from irwm.detection.coco_val import coco_map
+from irwm.detection.coco_val import coco_map, fp_metrics
 from irwm.utils.paths import repo_root
 
 REPO = repo_root()
@@ -217,11 +217,25 @@ class TestCocoGt:
         assert coco_map(va.to_coco_gt(occlusion=(1,)), dets, class_names=KAIST_CLASS_NAMES)["AP"] == pytest.approx(1.0)
 
 
+class TestFpMetrics:
+    def test_rates(self):
+        cats = {"person": 1, "cyclist": 2}
+        dets = [{"image_id": 1, "category_id": 1, "score": 0.9}, {"image_id": 1, "category_id": 2, "score": 0.4},
+                {"image_id": 2, "category_id": 1, "score": 0.35}, {"image_id": 9, "category_id": 1, "score": 0.99}]
+        m = fp_metrics(dets, [1, 2, 3, 4], cats, thresholds=(0.3, 0.5))
+        assert m["n_images"] == 4
+        assert m["FPPI@0.3"] == 3 / 4 and m["frac_fp@0.3"] == 2 / 4  # image 9 is not an empty frame
+        assert m["FPPI@0.5"] == 1 / 4 and m["frac_fp@0.5"] == 1 / 4
+        assert m["FPPI@0.3_person"] == 2 / 4 and m["FPPI@0.3_cyclist"] == 1 / 4 and m["frac_fp@0.5_cyclist"] == 0.0
+        assert math.isnan(fp_metrics(dets, [], cats)["FPPI@0.5"])
+
+
 # --------------------------------------------------------------------------- data module
 class TestDataModule:
     def test_sets(self, tiny_kaist):
-        dm = _dm(tiny_kaist, val_stride=2, train_eval_stride=2)
+        dm = _dm(tiny_kaist, val_stride=2, train_eval_stride=2, empty_ratio=0)
         assert len(dm.train_set) == 5 and dm.train_set.n_dropped_empty == 2  # negative + ignore-only frame
+        assert dm.train_sampler is None and dm.train_epoch_size == 5
         assert len(dm.val_set) == 3  # set02 frames 3, 11 + set05 frame 3
         assert len(dm.train_eval_set) == 4 and dm.train_eval_set.flip_p == 0.0
         assert sorted(dm.val_variants) == sorted(OCCLUSION_LEVELS)
@@ -230,16 +244,66 @@ class TestDataModule:
         (e,) = dm.extra_eval()
         assert e["prefix"] == "train_eval" and e["gt"] is dm.train_eval_gt
 
+    def test_frame_subsets(self, tiny_kaist):
+        dm = _dm(tiny_kaist, train_eval_stride=1)
+        sid = lambda s, f: image_id_of(s, "V000", f"I{f:05d}")  # noqa: E731
+        # val: set02 3, 15 + set05 3 have boxes; set02 11 is empty; set02 7 has only an 'unpaired' ignore box
+        assert sorted(dm.val_subsets["nonempty"]["image_ids"]) == sorted([sid("set02", 3), sid("set02", 15),
+                                                                            sid("set05", 3)])
+        assert dm.val_negatives["empty"] == [sid("set02", 11)]
+        assert sorted(i["id"] for i in dm.val_subsets["nonempty"]["gt"]["images"]) == \
+            sorted(dm.val_subsets["nonempty"]["image_ids"])
+        assert dm.train_eval_negatives["empty"] == [sid("set00", 7)]  # set03 7 is ignore-only: in neither
+        assert len(dm.train_eval_subsets["nonempty"]["image_ids"]) == 5
+        (e,) = dm.extra_eval()
+        assert e["subsets"] is dm.train_eval_subsets and e["negatives"] is dm.train_eval_negatives
+
     def test_no_train_eval(self, tiny_kaist):
         dm = _dm(tiny_kaist)
         assert dm.train_eval_set is None and dm.extra_eval() == []
         assert len(dm.val_set) == 5
         assert not isinstance(dm.val_dataloader(), list)
 
+    def test_empty_ratio(self, tiny_kaist):
+        neg = image_id_of("set00", "V000", "I00007")  # no box at all
+        ign = image_id_of("set03", "V000", "I00007")  # only an ignore box (person?) → never a negative
+        dm = _dm(tiny_kaist, empty_ratio=0.25)
+        assert (dm.n_positive, dm.n_empty_pool, dm.n_ignore_only, dm.n_empty_per_epoch) == (5, 1, 1, 1)
+        ids = dm.train_set._image_ids()
+        assert neg in ids and ign not in ids and len(dm.train_set) == 6 == dm.train_epoch_size
+        loader = dm.train_dataloader()
+        assert loader.sampler is dm.train_sampler and len(list(dm.train_sampler)) == 6
+        all_ = _dm(tiny_kaist, empty_ratio="all")
+        assert all_.n_empty_per_epoch == 1
+        with pytest.raises(ValueError, match="empty_ratio"):
+            _dm(tiny_kaist, empty_ratio=-1)
+
     def test_smoke_mode(self, tiny_kaist):
         ids = [image_id_of("set00", "V000", "I00003"), image_id_of("set00", "V000", "I00011")]
         dm = _dm(tiny_kaist, train_image_ids=ids, val_split="train", val_image_ids=ids, train_eval_stride=2)
         assert dm.val_set._image_ids() == ids and set(dm.train_eval_set._image_ids()) <= set(ids)
+
+
+class TestEmptyMixSampler:
+    def test_draw(self):
+        from irwm.data.detection import EmptyMixSampler, n_empty_per_epoch
+
+        pos, emp = list(range(10)), list(range(10, 50))
+        s = EmptyMixSampler(pos, emp, n_empty=8, seed=3)
+        draws = []
+        for epoch in range(3):
+            s.set_epoch(epoch)
+            idx = list(s)
+            assert len(idx) == len(s) == 18 and len(set(idx)) == 18
+            assert set(pos) <= set(idx)  # every positive, every epoch
+            draws.append(frozenset(idx) - set(pos))
+        assert len(set(draws)) == 3  # a fresh empty draw per epoch
+        s.set_epoch(1)
+        assert frozenset(s) - set(pos) == draws[1]  # (seed, epoch) → same frames, e.g. after a resume
+        assert n_empty_per_epoch(0.25, 3397, 6000) == 849 and n_empty_per_epoch("all", 3397, 6000) == 6000
+        assert n_empty_per_epoch(5.0, 10, 7) == 7 and n_empty_per_epoch(0, 10, 7) == 0
+        with pytest.raises(ValueError):
+            EmptyMixSampler(pos, emp, n_empty=41)
 
 
 # --------------------------------------------------------------------------- DetectorModule
@@ -270,7 +334,8 @@ class TestDetectorModule:
 
         dm = _dm(tiny_kaist, train_eval_stride=2)
         ns = SimpleNamespace(val_gt=dm.val_gt, val_variants=dm.val_variants, extra_eval=dm.extra_eval(),
-                             class_names=list(KAIST_CLASS_NAMES))
+                             val_subsets=dm.val_subsets, val_negatives=dm.val_negatives,
+                             fp_thresholds=(0.3, 0.5), class_names=list(KAIST_CLASS_NAMES))
 
         def by_image(gt):
             out: dict[int, list[dict]] = {}
@@ -278,17 +343,28 @@ class TestDetectorModule:
                 out.setdefault(d["image_id"], []).append(d)
             return out
 
-        scored = DetectorModule.score_eval_sets(ns, [by_image(dm.val_gt), by_image(dm.train_eval_gt)])
-        assert set(scored) == {"val", "train_eval"}
-        for prefix, m in scored.items():
+        val_dets = {i: [{**d, "score": 0.5} for d in ds] for i, ds in by_image(dm.val_gt).items()}
+        empty_id = dm.val_negatives["empty"][0]
+        val_dets[empty_id] = [{"image_id": empty_id, "category_id": 1, "bbox": [5, 5, 20, 40], "score": 0.6}]
+        scored = DetectorModule.score_eval_sets(ns, [val_dets, by_image(dm.train_eval_gt)])
+        assert set(scored) == {"val", "train_eval", "val_nonempty", "val_empty", "train_eval_nonempty",
+                               "train_eval_empty"}
+        # the false positive on the empty frame costs AP on all frames, not on the non-empty ones
+        assert scored["val"]["AP"] < 1.0 and scored["val_nonempty"]["AP"] == pytest.approx(1.0)
+        assert scored["val_empty"]["FPPI@0.5"] == 1.0 and scored["val_empty"]["frac_fp@0.3_person"] == 1.0
+        assert scored["val_empty"]["FPPI@0.5_cyclist"] == 0.0 and scored["val_empty"]["n_images"] == 1
+        assert scored["val_nonempty"]["n_images"] == 3 and "AP50_cyclist" in scored["val_nonempty"]
+        for prefix in ("val", "train_eval"):
+            m = scored[prefix]
             for k in ("AP", "AP50", "AP_person", "AP50_person", "AP_cyclist", "AP50_cyclist",
                       "AP_occ_partial", "AP50_occ_partial", "AP_occ_heavy", "AP50_occ_heavy",
                       "AP_occ_any", "AP50_occ_any"):
                 assert k in m, (prefix, k)
-            assert m["AP"] == pytest.approx(1.0)
-        assert scored["val"]["AP_occ_heavy"] == pytest.approx(1.0)
+        assert scored["train_eval"]["AP"] == pytest.approx(1.0)
+        # occlusion metrics stay on all frames, so the empty-frame false positive costs them too
+        assert scored["val"]["AP_occ_heavy"] < 1.0
         # a subset with no GT box logs nan, not COCOeval's -1
-        empty = SimpleNamespace(**{**ns.__dict__, "extra_eval": [],
+        empty = SimpleNamespace(**{**ns.__dict__, "extra_eval": [], "val_subsets": {}, "val_negatives": {},
                                    "val_variants": {"empty": {**dm.val_gt, "annotations": []}}})
         m = DetectorModule.score_eval_sets(empty, [by_image(dm.val_gt)])["val"]
         assert math.isnan(m["AP_empty"]) and math.isnan(m["AP50_empty"])
@@ -312,7 +388,8 @@ class TestDetectorModule:
         m = DetectorModule(detector=DET, encoder=ENC, optim=OPTIM, encoder_module=StubEncoder(),
                            val_gt=dm.val_gt, class_names=list(KAIST_CLASS_NAMES),
                            label_to_category_id=dict(KAIST_LABEL_TO_CATEGORY_ID),
-                           val_variants=dm.val_variants, extra_eval=dm.extra_eval())
+                           val_variants=dm.val_variants, extra_eval=dm.extra_eval(),
+                           val_subsets=dm.val_subsets, val_negatives=dm.val_negatives)
         m.detector.detr.select_box_nums_for_evaluation = 100
         m.metrics_dir = tmp_path / "val_metrics"
         trainer = L.Trainer(accelerator="cpu", devices=1, logger=CSVLogger(tmp_path, name="csv"),
@@ -322,9 +399,12 @@ class TestDetectorModule:
         for prefix in ("val", "train_eval"):
             assert {f"{prefix}/AP", f"{prefix}/AP50", f"{prefix}/AP_person", f"{prefix}/AP50_cyclist",
                     f"{prefix}/AP_occ_partial", f"{prefix}/AP50_occ_heavy", f"{prefix}/AP_occ_any"} <= keys
+            assert {f"{prefix}_nonempty/AP", f"{prefix}_nonempty/AP50_person", f"{prefix}_empty/FPPI@0.3",
+                    f"{prefix}_empty/frac_fp@0.5", f"{prefix}_empty/FPPI@0.5_cyclist"} <= keys
         assert not any("dataloader_idx" in k for k in keys)
         rec = json.loads((tmp_path / "val_metrics" / "epoch_000.json").read_text())
-        assert set(rec["eval"]) == {"val", "train_eval"} and rec["metrics"] == rec["eval"]["val"]
+        assert set(rec["eval"]) == {"val", "train_eval", "val_nonempty", "val_empty", "train_eval_nonempty",
+                                    "train_eval_empty"} and rec["metrics"] == rec["eval"]["val"]
 
 
 # --------------------------------------------------------------------------- configs + launcher
@@ -349,6 +429,7 @@ class TestConfigs:
         assert cfg.trainer.max_epochs == 20 and cfg.optim.lr_drop_epoch == 15
         assert cfg.trainer.check_val_every_n_epoch == 2 and cfg.detector.num_classes == 2
         assert cfg.encoder.kind == "dinopca" and cfg.encoder.policy == "native" and cfg.encoder.attention == "sdpa"
+        assert cfg.data.empty_ratio == 0.25 and list(cfg.kaist.fp_thresholds) == [0.3, 0.5]
 
     def test_bad_config(self, irwm_env):
         check = _entry().check_config
@@ -356,6 +437,8 @@ class TestConfigs:
             check(_compose(["kaist=kaist_dinopca_ir", "detector.num_classes=1"]))
         with pytest.raises(ValueError, match="modality"):
             check(_compose(["kaist=kaist_dinopca_ir", "modality=rgb"]))
+        with pytest.raises(ValueError, match="empty_ratio"):
+            check(_compose(["kaist=kaist_dinopca_ir", "data.empty_ratio=some"]))
         with pytest.raises(ValueError, match="not a KAIST head"):
             check(_compose(["kaist=kaist_dinopca_ir", "name=aligned_dinopca_ir"]))
 
@@ -378,7 +461,7 @@ class TestLauncher:
         assert "kaist=kaist_dinopca_ir" in ir and "IRWM_STAGE_KAIST_CAMERAS=lwir" in ir
         for ln in lines:
             assert "IRWM_STAGE_DATA=1" in ln and "IRWM_STAGE_KAIST_LIST=train-all-04.txt" in ln
-            assert "kaist-cvpr15" in ln and "kaist-paired" in ln and "--time=240" in ln
+            assert "kaist-cvpr15" in ln and "kaist-paired" in ln and "--time=270" in ln
 
 
 @pytest.mark.data
